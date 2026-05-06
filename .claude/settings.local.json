@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(python --version)",
+      "PowerShell(py --version)",
+      "PowerShell(node --version)",
+      "PowerShell(npm --version)",
+      "PowerShell(npm uninstall serialport)",
+      "PowerShell(Get-CimInstance Win32_SerialPort)",
+      "PowerShell(Get-PnpDevice -Class Ports -PresentOnly -ErrorAction SilentlyContinue)",
+      "PowerShell(\"---\")"
+    ]
+  }
+}
