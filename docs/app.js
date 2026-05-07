@@ -52,6 +52,7 @@ const stLocal = $('state-local');
 const stFault = $('state-fault');
 const stRetries = $('state-retries');
 const stWd = $('state-wd');
+const stFwver = $('state-fwver');
 
 // Logs display
 const logOnTime = $('log-ontime');
@@ -230,7 +231,7 @@ function handleLine(line) {
     case 'UPDATE':   handleUpdate(fields); break;
     case 'SETTINGS': handleSettings(fields); break;
     case 'HISTORY':  handleHistory(fields); break;
-    case 'FWVER':    /* not displayed yet */ break;
+    case 'FWVER':    handleVersion(fields); break;
   }
 }
 
@@ -298,6 +299,13 @@ function handleSettings(f) {
   mainEl.removeAttribute('hidden');
   setStatus(`Connected — DCN address ${cfg.addr}`);
   refreshDirty();
+}
+
+// FWVER,SPS1,<ver>  (V1.1+; older firmware won't respond and the field
+// stays as the default "—".)
+function handleVersion(f) {
+  const ver = (f[2] || '').trim();
+  stFwver.textContent = ver || '—';
 }
 
 // HISTORY,SPS1,,tot,uv,ov,oc
@@ -396,6 +404,8 @@ async function initialQueries() {
     await send('STATE');
     await sleep(150);
     await send('LOGS');
+    await sleep(150);
+    await send('VERSION');
 
     // If we don't get a SETTINGS reply within 3 s, surface an error.
     const start = Date.now();
