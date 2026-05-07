@@ -8,7 +8,11 @@
       "PowerShell(npm uninstall serialport)",
       "PowerShell(Get-CimInstance Win32_SerialPort)",
       "PowerShell(Get-PnpDevice -Class Ports -PresentOnly -ErrorAction SilentlyContinue)",
-      "PowerShell(\"---\")"
+      "PowerShell(\"---\")",
+      "Bash(node --check src/renderer.js)",
+      "Bash(node --check src/index.js)",
+      "Bash(node --check src/preload.js)",
+      "Bash(node --check docs/app.js)"
     ]
   }
 }

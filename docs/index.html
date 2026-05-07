@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SPS-1 Config Tool</title>
+    <link rel="stylesheet" href="index.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>SPS-1 Configuration Tool</h1>
+      <div class="controls">
+        <button id="connect" disabled>Connect</button>
+        <button id="disconnect" disabled>Disconnect</button>
+        <span id="status">Idle</span>
+      </div>
+    </header>
+
+    <main id="main" hidden>
+      <section class="card">
+        <h2>Live State</h2>
+        <div class="state-grid">
+          <div><span class="label">Input Voltage</span><span id="state-voltage" class="value">—</span></div>
+          <div><span class="label">Switch Current</span><span id="state-current" class="value">—</span></div>
+          <div><span class="label">Output Power</span><span id="state-power" class="value">—</span></div>
+          <div><span class="label">DCN Enable</span><span id="state-dcn" class="value">—</span></div>
+          <div><span class="label">Local Enable</span><span id="state-local" class="value">—</span></div>
+          <div><span class="label">Fault</span><span id="state-fault" class="value">—</span></div>
+          <div><span class="label">OC Retries</span><span id="state-retries" class="value">—</span></div>
+          <div><span class="label">Watchdog</span><span id="state-wd" class="value">—</span></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Voltage Limits</h2>
+        <div class="field-grid">
+          <label>
+            <span>Undervoltage Limit (V)</span>
+            <input id="cfg-uvset" type="number" step="0.001" min="6" max="18" />
+            <small>Range: 6.000 – 18.000 V</small>
+          </label>
+          <label>
+            <span>Overvoltage Limit (V)</span>
+            <input id="cfg-ovset" type="number" step="0.001" min="6" max="18" />
+            <small>Range: 6.000 – 18.000 V</small>
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Overcurrent Protection</h2>
+        <div class="field-grid">
+          <label>
+            <span>Overcurrent Limit (A)</span>
+            <input id="cfg-ocset" type="number" step="0.001" min="5" max="35" />
+            <small>Range: 5.000 – 35.000 A</small>
+          </label>
+          <label>
+            <span>Auto-Reset</span>
+            <select id="cfg-ocauto">
+              <option value="0">Disabled (Manual)</option>
+              <option value="1">Enabled (Automatic)</option>
+            </select>
+          </label>
+          <label>
+            <span>Reset Delay (s)</span>
+            <input id="cfg-ocdelay" type="number" step="1" min="0" max="3600" />
+            <small>Whole seconds only</small>
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Mobile Mode</h2>
+        <div class="field-grid">
+          <label>
+            <span>Mobile Mode</span>
+            <select id="cfg-moben">
+              <option value="0">Disabled</option>
+              <option value="1">Enabled</option>
+            </select>
+          </label>
+          <label>
+            <span>Off Threshold (V)</span>
+            <input id="cfg-moboff" type="number" step="0.001" />
+            <small>Must be ≥ UV limit + 1.000 V</small>
+          </label>
+          <label>
+            <span>On Threshold (V)</span>
+            <input id="cfg-mobon" type="number" step="0.001" />
+            <small>Must be ≤ OV limit − 1.000 V</small>
+          </label>
+          <label>
+            <span>Timeout (min)</span>
+            <input id="cfg-mobto" type="number" step="1" min="1" max="100" />
+            <small>Range: 1 – 100 minutes</small>
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Switch Configuration</h2>
+        <div class="field-grid">
+          <label>
+            <span>Switch Mode</span>
+            <select id="cfg-swmode">
+              <option value="0">Toggle</option>
+              <option value="1">Pushbutton</option>
+            </select>
+          </label>
+          <label>
+            <span>DCN Address (hex)</span>
+            <input id="cfg-addr" type="text" maxlength="2" pattern="[0-9A-Fa-f]{1,2}" />
+            <small>2 hex digits, 01 – FF (00 not allowed)</small>
+          </label>
+        </div>
+      </section>
+
+      <section class="card calset-card">
+        <h2>Calibration (CALSET)</h2>
+        <p class="warning-banner">
+          ⚠ <strong>CALSET parameters should match the factory-provided values</strong> and only be changed if the
+          original values were corrupted. These values directly affect the overcurrent trip point. Setting them
+          incorrectly may allow damage to connected equipment.
+        </p>
+        <div class="field-grid">
+          <label>
+            <span>Scale Factor</span>
+            <input id="cfg-cal" type="number" step="0.001" min="0" />
+            <small>Always positive</small>
+          </label>
+          <label>
+            <span>Offset (mA)</span>
+            <input id="cfg-ofst" type="number" step="1" />
+            <small>May be positive or negative</small>
+          </label>
+        </div>
+      </section>
+
+      <section class="action-bar">
+        <button id="btn-update" class="primary">UPDATE</button>
+        <button id="btn-revert">Revert</button>
+        <button id="btn-refresh">Refresh from Device</button>
+        <span id="update-status" class="muted"></span>
+      </section>
+
+      <section class="card">
+        <h2>Logs</h2>
+        <div class="state-grid">
+          <div><span class="label">Total ON Time</span><span id="log-ontime" class="value">—</span></div>
+          <div><span class="label">Undervoltage Trips</span><span id="log-uv" class="value">—</span></div>
+          <div><span class="label">Overvoltage Trips</span><span id="log-ov" class="value">—</span></div>
+          <div><span class="label">Overcurrent Trips</span><span id="log-oc" class="value">—</span></div>
+        </div>
+        <div class="action-bar">
+          <button id="btn-refresh-logs">Refresh Logs</button>
+          <button id="btn-reset-logs" class="danger">RESET LOGS</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Serial Trace <button id="btn-toggle-log" class="link">show</button></h2>
+        <div id="log" class="log" hidden></div>
+      </section>
+    </main>
+
+    <!-- Startup welcome modal -->
+    <div id="welcome-modal" class="modal">
+      <div class="modal-card" id="welcome-card">
+        <h2>Connect SPS-1</h2>
+        <p>Before continuing, please:</p>
+        <ul>
+          <li>Connect a single SPS-1 to the serial port.</li>
+          <li>Ensure input power is connected to the SPS-1.</li>
+          <li><strong>Only one SPS-1 may be connected</strong> — this tool uses broadcast messages
+            and will misbehave if multiple devices respond.</li>
+        </ul>
+        <p class="muted">When you click Connect, your browser will show a list of available
+          serial ports. Pick the one the SPS-1 is attached to.</p>
+        <div class="modal-actions">
+          <button id="welcome-continue" class="primary">Continue</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Unsupported browser modal (shown only when navigator.serial is missing) -->
+    <div id="unsupported-modal" class="modal" hidden>
+      <div class="modal-card warning">
+        <h2>Browser Not Supported</h2>
+        <p>This tool uses the <strong>Web Serial API</strong>, which is only available in
+          Chromium-based browsers.</p>
+        <p>Please open this page in:</p>
+        <ul>
+          <li>Google Chrome (89 or newer)</li>
+          <li>Microsoft Edge (89 or newer)</li>
+          <li>Brave, Opera, or another Chromium-based browser</li>
+        </ul>
+        <p class="muted">Firefox and Safari do not support direct serial-port access from web pages.</p>
+      </div>
+    </div>
+
+    <!-- Power-on warning modal -->
+    <div id="power-warning" class="modal" hidden>
+      <div class="modal-card warning">
+        <h2>Switch is ON</h2>
+        <p>The SPS-1 output power switch is currently <strong>ON</strong>.
+          Configuration parameters can only be modified while the switch is in the
+          <strong>IDLE</strong> state (both DCN Enable and Local Enable OFF).</p>
+        <p>Turn the switch OFF (set local enable and/or remove the DCN enable command)
+          to continue. This window will close automatically when the switch returns to idle.</p>
+        <div class="state-grid small">
+          <div><span class="label">DCN Enable</span><span id="pw-dcn" class="value">—</span></div>
+          <div><span class="label">Local Enable</span><span id="pw-local" class="value">—</span></div>
+          <div><span class="label">Power Switch</span><span id="pw-power" class="value">—</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Confirm CALSET change -->
+    <div id="confirm-calset" class="modal" hidden>
+      <div class="modal-card warning">
+        <h2>Confirm Calibration Change</h2>
+        <p>You are about to change the SPS-1 <strong>calibration values</strong> (CALSET).</p>
+        <p>These values directly affect the overcurrent trip point. Setting them
+          incorrectly may allow damage to connected equipment. Only proceed if you
+          are restoring factory-provided calibration values.</p>
+        <p>Current change:</p>
+        <pre id="calset-diff"></pre>
+        <div class="modal-actions">
+          <button id="calset-cancel">Cancel</button>
+          <button id="calset-confirm" class="danger">Yes, Change Calibration</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Confirm reset logs -->
+    <div id="confirm-rstlogs" class="modal" hidden>
+      <div class="modal-card warning">
+        <h2>Reset Logs?</h2>
+        <p>This will clear all fault counts (Undervoltage, Overvoltage, Overcurrent)
+          stored in the SPS-1. The total ON-time counter is <em>not</em> affected.</p>
+        <p>Are you sure?</p>
+        <div class="modal-actions">
+          <button id="rstlogs-cancel">Cancel</button>
+          <button id="rstlogs-confirm" class="danger">Yes, Reset Logs</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
