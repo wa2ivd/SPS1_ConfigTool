@@ -23,8 +23,6 @@ const welcomeContinue = $('welcome-continue');
 const unsupportedModal = $('unsupported-modal');
 
 const powerWarning = $('power-warning');
-const pwDcn = $('pw-dcn');
-const pwLocal = $('pw-local');
 const pwPower = $('pw-power');
 
 const calsetModal = $('confirm-calset');
@@ -47,12 +45,13 @@ const resetLogsBtn = $('btn-reset-logs');
 const stV = $('state-voltage');
 const stA = $('state-current');
 const stPwr = $('state-power');
-const stDcn = $('state-dcn');
-const stLocal = $('state-local');
+const stSwitch = $('state-switch');
 const stFault = $('state-fault');
 const stRetries = $('state-retries');
 const stWd = $('state-wd');
 const stFwver = $('state-fwver');
+const stAddrSw = $('state-addrsw');
+const stSetSw = $('state-setsw');
 
 // Logs display
 const logOnTime = $('log-ontime');
@@ -235,32 +234,27 @@ function handleLine(line) {
   }
 }
 
-// UPDATE response. Two firmware variants seen in the wild:
-//   docs:  UPDATE,SPS1,D,L,P,FS,r,V,A,WD   (10 fields)
-//   v1.x:  UPDATE,SPS1,D,L,FS,r,V,A,WD     (no explicit P, 9 fields)
-// We pick layout by field count and treat "idle" (D=0 AND L=0) as the
-// gating condition for the power-on warning, since SET commands are
-// only processed in the idle state.
+// UPDATE,SPS1,R,P,FS,r,V,A,WD
+// R = combined Power Request (1 if Local OR DCN request is on)
+// P = output power switch state. Can differ from R during fault conditions
+//     (e.g. R=1 but P=0 if a UV/OV/OC fault is preventing output).
+// SET commands are only processed when R=0 (idle).
 function handleUpdate(f) {
-  let D, L, P, FS, r, V, A, WD;
-  if (f.length >= 10) {
-    D = f[2]; L = f[3]; P = f[4];
-    FS = (f[5] || '').trim();
-    r = f[6]; V = f[7]; A = f[8]; WD = f[9];
-  } else {
-    D = f[2]; L = f[3];
-    FS = (f[4] || '').trim();
-    r = f[5]; V = f[6]; A = f[7]; WD = f[8];
-    P = (D === '1' || L === '1') ? '1' : '0';
-  }
-  const idle = D === '0' && L === '0';
+  const R  = f[2];
+  const P  = f[3];
+  const FS = (f[4] || '').trim();
+  const r  = f[5];
+  const V  = f[6];
+  const A  = f[7];
+  const WD = f[8];
+  const idle = R === '0';
 
   stV.textContent = `${V} V`;
   stA.textContent = `${A} A`;
-  stPwr.textContent = P === '1' ? 'ON' : 'OFF';
-  stPwr.className = `value ${P === '1' ? 'bad' : 'good'}`;
-  stDcn.textContent = D === '1' ? 'ON' : 'OFF';
-  stLocal.textContent = L === '1' ? 'ON' : 'OFF';
+  stPwr.textContent = R === '1' ? 'ON' : 'OFF';
+  stPwr.className = `value ${R === '1' ? 'bad' : 'good'}`;
+  stSwitch.textContent = P === '1' ? 'ON' : 'OFF';
+  stSwitch.className = `value ${P === '1' ? 'bad' : 'good'}`;
   stFault.textContent = FS === '' ? 'None' :
                         FS === 'UV' ? 'Undervoltage' :
                         FS === 'OV' ? 'Overvoltage' :
@@ -270,14 +264,14 @@ function handleUpdate(f) {
   stWd.textContent = WD === 'WD' ? 'WATCHDOG RESET' : 'OK';
   stWd.className = `value ${WD === 'WD' ? 'bad' : 'good'}`;
 
-  pwDcn.textContent = D === '1' ? 'ON' : 'OFF';
-  pwLocal.textContent = L === '1' ? 'ON' : 'OFF';
-  pwPower.textContent = P === '1' ? 'ON' : 'OFF';
+  pwPower.textContent = R === '1' ? 'ON' : 'OFF';
   if (!idle) powerWarning.removeAttribute('hidden');
   else powerWarning.setAttribute('hidden', '');
 }
 
-// SETTINGS,SPS1,xx,uuuuu,ooooo,ccccc,a,t,m,moff,mon,mto,cal,ofst,s
+// SETTINGS,SPS1,xx,uuuuu,ooooo,ccccc,a,t,m,moff,mon,mto,cal,ofst,s,y,z
+// y = physical DCN ADDR switch position at power-up (hex)
+// z = physical SET switch position at power-up
 function handleSettings(f) {
   const cfg = {
     addr: (f[2] || '').toUpperCase().padStart(2, '0'),
@@ -293,9 +287,13 @@ function handleSettings(f) {
     cal: parseFloat(f[12]),
     ofst: parseInt(f[13], 10),
     swmode: f[14],
+    addrSw: (f[15] || '').trim(),
+    setSw:  (f[16] || '').trim(),
   };
   original = cfg;
   populateInputs(cfg);
+  stAddrSw.textContent = cfg.addrSw ? cfg.addrSw.toUpperCase().padStart(2, '0') : '—';
+  stSetSw.textContent  = cfg.setSw || '—';
   mainEl.removeAttribute('hidden');
   setStatus(`Connected — DCN address ${cfg.addr}`);
   refreshDirty();
@@ -308,12 +306,12 @@ function handleVersion(f) {
   stFwver.textContent = ver || '—';
 }
 
-// HISTORY,SPS1,,tot,uv,ov,oc
+// HISTORY,SPS1,tot,uv,ov,oc
 function handleHistory(f) {
-  const tot = parseInt(f[3], 10);
-  const uv = f[4];
-  const ov = f[5];
-  const oc = f[6];
+  const tot = parseInt(f[2], 10);
+  const uv  = f[3];
+  const ov  = f[4];
+  const oc  = f[5];
   logOnTime.textContent = formatOnTime(tot);
   logUv.textContent = uv;
   logOv.textContent = ov;

@@ -22,13 +22,14 @@
         <div class="state-grid">
           <div><span class="label">Input Voltage</span><span id="state-voltage" class="value">—</span></div>
           <div><span class="label">Switch Current</span><span id="state-current" class="value">—</span></div>
-          <div><span class="label">Output Power</span><span id="state-power" class="value">—</span></div>
-          <div><span class="label">DCN Enable</span><span id="state-dcn" class="value">—</span></div>
-          <div><span class="label">Local Enable</span><span id="state-local" class="value">—</span></div>
+          <div><span class="label">Power Request</span><span id="state-power" class="value">—</span></div>
+          <div><span class="label">Power Switch</span><span id="state-switch" class="value">—</span></div>
           <div><span class="label">Fault</span><span id="state-fault" class="value">—</span></div>
           <div><span class="label">OC Retries</span><span id="state-retries" class="value">—</span></div>
           <div><span class="label">Watchdog</span><span id="state-wd" class="value">—</span></div>
           <div><span class="label">Firmware Version</span><span id="state-fwver" class="value">—</span></div>
+          <div><span class="label">DCN ADDR Switch</span><span id="state-addrsw" class="value">—</span></div>
+          <div><span class="label">SET Switch</span><span id="state-setsw" class="value">—</span></div>
         </div>
       </section>
 
@@ -204,15 +205,13 @@
     <div id="power-warning" class="modal" hidden>
       <div class="modal-card warning">
         <h2>Switch is ON</h2>
-        <p>The SPS-1 output power switch is currently <strong>ON</strong>.
+        <p>The SPS-1 power output is currently <strong>requested ON</strong>.
           Configuration parameters can only be modified while the switch is in the
-          <strong>IDLE</strong> state (both DCN Enable and Local Enable OFF).</p>
-        <p>Turn the switch OFF (set local enable and/or remove the DCN enable command)
-          to continue. This window will close automatically when the switch returns to idle.</p>
+          <strong>IDLE</strong> state (Power Request OFF).</p>
+        <p>Turn the local enable OFF and clear any DCN power request to continue.
+          This window will close automatically when the switch returns to idle.</p>
         <div class="state-grid small">
-          <div><span class="label">DCN Enable</span><span id="pw-dcn" class="value">—</span></div>
-          <div><span class="label">Local Enable</span><span id="pw-local" class="value">—</span></div>
-          <div><span class="label">Power Switch</span><span id="pw-power" class="value">—</span></div>
+          <div><span class="label">Power Request</span><span id="pw-power" class="value">—</span></div>
         </div>
       </div>
     </div>
