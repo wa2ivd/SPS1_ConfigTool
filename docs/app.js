@@ -95,6 +95,10 @@ let connected = false;
 let suppressPoll = false;
 
 let original = null;
+// Address of the SPS-1 we're currently talking to, taken from the "from"
+// field of received messages. Authoritative — may differ from both the
+// physical DCN ADDR switch and the EEPROM-stored address.
+let connectedAddr = null;
 
 // ---------- Logging ----------
 const setStatus = (text) => { statusEl.textContent = text; };
@@ -141,6 +145,7 @@ async function openPort() {
 async function closePort() {
   stopPolling();
   connected = false;
+  connectedAddr = null;
   try {
     if (reader) { await reader.cancel().catch(() => {}); reader = null; }
     if (readableStreamClosed) { await readableStreamClosed; readableStreamClosed = null; }
@@ -222,9 +227,17 @@ async function send(cmd) {
 // ---------- Protocol parser ----------
 function handleLine(line) {
   appendLog(`< ${line}`);
-  const m = line.match(/^\/[0-9A-Fa-f]{2,4}:(.+):[^:]*$/);
+  const m = line.match(/^\/([0-9A-Fa-f]{2,4}):(.+):[^:]*$/);
   if (!m) return;
-  const fields = m[1].split(',');
+  // First 2 hex digits of the prefix are the "from" address — the actual
+  // address of the SPS that sent this reply. The remaining digits (if any)
+  // are the "to" address echoed from the command we sent.
+  const fromAddr = m[1].slice(0, 2).toUpperCase();
+  if (fromAddr !== connectedAddr) {
+    connectedAddr = fromAddr;
+    if (connected) setStatus(`Connected — DCN address ${connectedAddr}`);
+  }
+  const fields = m[2].split(',');
   const type = fields[0];
   switch (type) {
     case 'UPDATE':   handleUpdate(fields); break;
@@ -295,7 +308,7 @@ function handleSettings(f) {
   stAddrSw.textContent = cfg.addrSw ? cfg.addrSw.toUpperCase().padStart(2, '0') : '—';
   stSetSw.textContent  = cfg.setSw || '—';
   mainEl.removeAttribute('hidden');
-  setStatus(`Connected — DCN address ${cfg.addr}`);
+  setStatus(`Connected — DCN address ${connectedAddr || cfg.addr}`);
   refreshDirty();
 }
 
