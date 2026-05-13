@@ -13,6 +13,7 @@ const $ = (id) => document.getElementById(id);
 
 const connectBtn = $('connect');
 const disconnectBtn = $('disconnect');
+const simulateBtn = $('simulate');
 const statusEl = $('status');
 const mainEl = $('main');
 const logEl = $('log');
@@ -90,6 +91,10 @@ let readableStreamClosed = null;
 let lineBuffer = '';
 let pollTimer = null;
 let connected = false;
+// True when the UI is driven by the built-in simulator instead of a real
+// serial port. `connected` is also true in this mode so the rest of the
+// app (send / poll / handleLine) works unchanged.
+let simulating = false;
 // Set while a multi-step command sequence is running so the STATE
 // poll doesn't interleave between e.g. OCSET and the follow-up CONFIG.
 let suppressPoll = false;
@@ -120,7 +125,8 @@ toggleLogBtn.addEventListener('click', () => {
 welcomeContinue.addEventListener('click', () => {
   welcomeModal.setAttribute('hidden', '');
   connectBtn.disabled = false;
-  setStatus('Ready — click Connect to choose serial port.');
+  simulateBtn.disabled = false;
+  setStatus('Ready — click Connect to choose serial port, or Simulate to try the UI without one.');
 });
 
 // ---------- Serial open / close ----------
@@ -135,6 +141,7 @@ async function openPort() {
   writer = port.writable.getWriter();
   connected = true;
   connectBtn.disabled = true;
+  simulateBtn.disabled = true;
   disconnectBtn.disabled = false;
   setStatus('Connected. Querying SPS-1…');
   readLoop();
@@ -144,6 +151,20 @@ async function openPort() {
 
 async function closePort() {
   stopPolling();
+  if (simulating) {
+    simulating = false;
+    connected = false;
+    connectedAddr = null;
+    original = null;
+    appendLog('! simulation ended');
+    setStatus('Simulation ended');
+    connectBtn.disabled = false;
+    simulateBtn.disabled = false;
+    disconnectBtn.disabled = true;
+    mainEl.setAttribute('hidden', '');
+    powerWarning.setAttribute('hidden', '');
+    return;
+  }
   connected = false;
   connectedAddr = null;
   try {
@@ -156,6 +177,7 @@ async function closePort() {
   }
   setStatus('Disconnected');
   connectBtn.disabled = false;
+  simulateBtn.disabled = false;
   disconnectBtn.disabled = true;
   mainEl.setAttribute('hidden', '');
   powerWarning.setAttribute('hidden', '');
@@ -208,12 +230,14 @@ async function readLoop() {
       mainEl.setAttribute('hidden', '');
       powerWarning.setAttribute('hidden', '');
       connectBtn.disabled = false;
+      simulateBtn.disabled = false;
       disconnectBtn.disabled = true;
     }
   }
 }
 
 async function send(cmd) {
+  if (simulating) { simulateSend(cmd); return; }
   if (!writer || !connected) return;
   const text = `//${cmd}\r`;
   appendLog(`> ${text.replace(/\r/g, '<CR>')}`);
@@ -235,7 +259,7 @@ function handleLine(line) {
   const fromAddr = m[1].slice(0, 2).toUpperCase();
   if (fromAddr !== connectedAddr) {
     connectedAddr = fromAddr;
-    if (connected) setStatus(`Connected — DCN address ${connectedAddr}`);
+    if (connected) setStatus(`${simulating ? 'Simulating' : 'Connected'} — DCN address ${connectedAddr}`);
   }
   const fields = m[2].split(',');
   const type = fields[0];
@@ -308,7 +332,7 @@ function handleSettings(f) {
   stAddrSw.textContent = cfg.addrSw ? cfg.addrSw.toUpperCase().padStart(2, '0') : '—';
   stSetSw.textContent  = cfg.setSw || '—';
   mainEl.removeAttribute('hidden');
-  setStatus(`Connected — DCN address ${connectedAddr || cfg.addr}`);
+  setStatus(`${simulating ? 'Simulating' : 'Connected'} — DCN address ${connectedAddr || cfg.addr}`);
   refreshDirty();
 }
 
@@ -444,6 +468,11 @@ function stopPolling() {
 
 // ---------- Refresh / revert buttons ----------
 refreshBtn.addEventListener('click', async () => {
+  if (simulating) {
+    updateStatus.textContent = 'Simulate mode — Refresh has no effect.';
+    setTimeout(() => { updateStatus.textContent = ''; }, 3000);
+    return;
+  }
   setStatus('Refreshing configuration…');
   await send('CONFIG');
   await sleep(120);
@@ -516,6 +545,11 @@ function validateInputs(d) {
 
 updateBtn.addEventListener('click', async () => {
   if (!original) return;
+  if (simulating) {
+    updateStatus.textContent = 'Simulate mode — UPDATE has no effect.';
+    setTimeout(() => { updateStatus.textContent = ''; }, 3000);
+    return;
+  }
   const d = dirtyMap();
   const anyDirty = Object.values(d).some(Boolean);
   if (!anyDirty) {
@@ -630,4 +664,134 @@ rstlogsConfirm.addEventListener('click', async () => {
   await send('RSTLOGS');
   await sleep(150);
   await send('LOGS');
+});
+
+// ---------- Simulate mode ----------
+// Drives the UI from an in-memory fake device so the tool can be exercised
+// without an SPS-1 attached. simulateSend() intercepts outbound commands,
+// mutates simState, and schedules synthesized replies through handleLine()
+// — so polling, refresh, UPDATE, and RSTLOGS all flow through the same
+// code paths as a real connection.
+const simState = {};
+
+function resetSimState() {
+  Object.assign(simState, {
+    addr: 'FF',
+    uvset_mv: 10700,
+    ovset_mv: 15000,
+    ocset_ma: 12000,
+    ocauto: '0',
+    ocdelay: 30,
+    moben: '0',
+    moboff_mv: 12500,
+    mobon_mv: 13500,
+    mobto: 10,
+    cal: 26.5,
+    ofst: 0,
+    swmode: '1',
+    addrSw: 'FF',
+    setSw: '0',
+    // Live state. SET commands are only honored when R='0' (idle),
+    // matching real-device behavior.
+    R: '0', P: '0', FS: '', r: '0', V: '13.200', A: '0.000', WD: '',
+    // History counters
+    histTot: 12345,
+    histUv: '2',
+    histOv: '0',
+    histOc: '1',
+  });
+}
+
+function simRespond(payload) {
+  // Real device replies are /<from><to>:PAYLOAD:<cksum>. handleLine
+  // ignores anything after the final colon, so a fixed "00" is fine.
+  const line = `/${simState.addr}:${payload}:00`;
+  // Small async hop so the "> //CMD" log appears before "< /..".
+  setTimeout(() => handleLine(line), 10);
+}
+
+function simulateSend(cmd) {
+  appendLog(`> //${cmd}<CR>`);
+  const parts = cmd.split(',');
+  const verb = parts[0];
+  const idle = simState.R === '0';
+
+  switch (verb) {
+    case 'CONFIG':
+      simRespond(
+        `SETTINGS,SPS1,${simState.addr},${simState.uvset_mv},${simState.ovset_mv},` +
+        `${simState.ocset_ma},${simState.ocauto},${simState.ocdelay},` +
+        `${simState.moben},${simState.moboff_mv},${simState.mobon_mv},${simState.mobto},` +
+        `${simState.cal.toFixed(3)},${simState.ofst},${simState.swmode},` +
+        `${simState.addrSw},${simState.setSw}`
+      );
+      return;
+    case 'STATE':
+      // Tiny jitter on voltage so the display looks live.
+      simState.V = (13.20 + (Math.random() - 0.5) * 0.04).toFixed(3);
+      simRespond(
+        `UPDATE,SPS1,${simState.R},${simState.P},${simState.FS},${simState.r},` +
+        `${simState.V},${simState.A},${simState.WD}`
+      );
+      return;
+    case 'LOGS':
+      simRespond(`HISTORY,SPS1,${simState.histTot},${simState.histUv},${simState.histOv},${simState.histOc}`);
+      return;
+    case 'VERSION':
+      simRespond('FWVER,SPS1,V1.2 (SIM)');
+      return;
+    case 'UVSET':
+      if (idle) simState.uvset_mv = parseInt(parts[1], 10);
+      return;
+    case 'OVSET':
+      if (idle) simState.ovset_mv = parseInt(parts[1], 10);
+      return;
+    case 'OCSET':
+      if (idle) {
+        simState.ocset_ma = parseInt(parts[1], 10);
+        simState.ocauto = parts[2];
+        simState.ocdelay = parseInt(parts[3], 10);
+      }
+      return;
+    case 'MOBSET':
+      if (idle) {
+        simState.moben = parts[1];
+        simState.moboff_mv = parseInt(parts[2], 10);
+        simState.mobon_mv = parseInt(parts[3], 10);
+        simState.mobto = parseInt(parts[4], 10);
+      }
+      return;
+    case 'SWMODE':
+      if (idle) simState.swmode = parts[1];
+      return;
+    case 'SETADDR':
+      if (idle) simState.addr = (parts[1] || '').toUpperCase().padStart(2, '0');
+      return;
+    case 'CALSET':
+      if (idle) {
+        simState.cal = parseFloat(parts[1]);
+        simState.ofst = parseInt(parts[2], 10);
+      }
+      return;
+    case 'RSTLOGS':
+      simState.histUv = '0';
+      simState.histOv = '0';
+      simState.histOc = '0';
+      return;
+  }
+}
+
+simulateBtn.addEventListener('click', async () => {
+  resetSimState();
+  simulating = true;
+  connected = true;
+  connectedAddr = null;
+  original = null;
+  connectBtn.disabled = true;
+  simulateBtn.disabled = true;
+  disconnectBtn.disabled = false;
+  setStatus('Simulating SPS-1 — no device connected');
+  appendLog('! simulate mode started');
+  await initialQueries();
+  startPolling();
 });
