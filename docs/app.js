@@ -77,6 +77,15 @@ const inputs = {
   ofst: $('cfg-ofst'),       // integer mA
 };
 
+// Mobile Mode bar graph
+const mvbarUv = $('mvbar-uv');
+const mvbarOff = $('mvbar-off');
+const mvbarOk = $('mvbar-ok');
+const mvbarOn = $('mvbar-on');
+const mvbarOv = $('mvbar-ov');
+const VGRAPH_MIN = 6;   // volts at the left edge of the graph
+const VGRAPH_MAX = 18;  // volts at the right edge of the graph
+
 // ---------- Browser support check ----------
 if (!('serial' in navigator)) {
   welcomeModal.setAttribute('hidden', '');
@@ -380,6 +389,41 @@ function populateInputs(cfg) {
   inputs.addr.value = cfg.addr;
   inputs.cal.value = String(cfg.cal);
   inputs.ofst.value = String(cfg.ofst);
+  updateMobileGraph();
+}
+
+// ---------- Mobile Mode bar graph ----------
+// The graph spans a fixed 6–18 V range. pctOf() maps a voltage to its
+// horizontal position (0–100%) on that span.
+const VGRAPH_SPAN = VGRAPH_MAX - VGRAPH_MIN;
+const clampV = (v) => Math.min(Math.max(v, VGRAPH_MIN), VGRAPH_MAX);
+const pctOf = (v) => ((v - VGRAPH_MIN) / VGRAPH_SPAN) * 100;
+
+// Mobile Mode: red up to the UV limit, yellow from UV to the Off
+// threshold, green from Off to On, light blue from On to the OV limit,
+// red from the OV limit to the right edge.
+function updateMobileGraph() {
+  let uv = parseFloat(inputs.uvset.value);
+  let ov = parseFloat(inputs.ovset.value);
+  let off = parseFloat(inputs.moboff.value);
+  let on = parseFloat(inputs.mobon.value);
+  uv = clampV(Number.isFinite(uv) ? uv : VGRAPH_MIN);
+  ov = clampV(Number.isFinite(ov) ? ov : VGRAPH_MAX);
+  off = clampV(Number.isFinite(off) ? off : uv);
+  on = clampV(Number.isFinite(on) ? on : ov);
+  // Enforce left-to-right ordering: uv ≤ off ≤ on ≤ ov.
+  if (off < uv) off = uv;
+  if (on < off) on = off;
+  if (ov < on) ov = on;
+  const uvPct = pctOf(uv);
+  const offPct = pctOf(off) - uvPct;
+  const onPct = pctOf(on) - pctOf(off);
+  const ovPct = 100 - pctOf(ov);
+  mvbarUv.style.width = `${uvPct}%`;
+  mvbarOff.style.width = `${offPct}%`;
+  mvbarOn.style.width = `${onPct}%`;
+  mvbarOv.style.width = `${ovPct}%`;
+  mvbarOk.style.width = `${100 - uvPct - offPct - onPct - ovPct}%`;
 }
 
 // ---------- Dirty tracking ----------
@@ -413,6 +457,11 @@ function refreshDirty() {
 for (const el of Object.values(inputs)) {
   el.addEventListener('input', refreshDirty);
   el.addEventListener('change', refreshDirty);
+}
+
+// Keep the bar graph in sync as the setpoints it depends on are edited.
+for (const key of ['uvset', 'ovset', 'moboff', 'mobon']) {
+  inputs[key].addEventListener('input', updateMobileGraph);
 }
 
 // ---------- Helpers ----------

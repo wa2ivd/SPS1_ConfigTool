@@ -19,35 +19,10 @@
 
     <main id="main" hidden>
       <section class="card">
-        <h2>Live State</h2>
-        <div class="state-grid">
-          <div><span class="label">Input Voltage</span><span id="state-voltage" class="value">—</span></div>
-          <div><span class="label">Switch Current</span><span id="state-current" class="value">—</span></div>
-          <div><span class="label">Power Request</span><span id="state-power" class="value">—</span></div>
-          <div><span class="label">Power Switch</span><span id="state-switch" class="value">—</span></div>
-          <div><span class="label">Fault</span><span id="state-fault" class="value">—</span></div>
-          <div><span class="label">OC Retries</span><span id="state-retries" class="value">—</span></div>
-          <div><span class="label">Watchdog</span><span id="state-wd" class="value">—</span></div>
-          <div><span class="label">Firmware Version</span><span id="state-fwver" class="value">—</span></div>
-          <div><span class="label">DCN ADDR Switch</span><span id="state-addrsw" class="value">—</span></div>
-          <div><span class="label">SET Switch</span><span id="state-setsw" class="value">—</span></div>
-        </div>
-      </section>
-
-      <section class="card">
-        <h2>Voltage Limits</h2>
-        <div class="field-grid">
-          <label>
-            <span>Undervoltage Limit (V)</span>
-            <input id="cfg-uvset" type="number" step="0.001" min="6" max="18" />
-            <small>Range: 6.000 – 18.000 V</small>
-          </label>
-          <label>
-            <span>Overvoltage Limit (V)</span>
-            <input id="cfg-ovset" type="number" step="0.001" min="6" max="18" />
-            <small>Range: 6.000 – 18.000 V</small>
-          </label>
-        </div>
+        <p class="warning-banner">
+          <strong>IMPORTANT:</strong> SET SWITCH must be set to <strong>0</strong> for updated
+          settings to remain in effect after SPS is power cycled.
+        </p>
       </section>
 
       <section class="card">
@@ -74,7 +49,21 @@
       </section>
 
       <section class="card">
-        <h2>Mobile Mode</h2>
+        <h2>Voltage Fault Limits</h2>
+        <div class="field-grid">
+          <label>
+            <span>Undervoltage Limit (V)</span>
+            <input id="cfg-uvset" type="number" step="0.001" min="6" max="18" />
+            <small>Range: 6.000 – 18.000 V</small>
+          </label>
+          <label>
+            <span>Overvoltage Limit (V)</span>
+            <input id="cfg-ovset" type="number" step="0.001" min="6" max="18" />
+            <small>Range: 6.000 – 18.000 V</small>
+          </label>
+        </div>
+
+        <h2>Mobile Mode (Auto Power Off/On voltage and timeout settings)</h2>
         <div class="field-grid">
           <label>
             <span>Mobile Mode</span>
@@ -98,6 +87,40 @@
             <input id="cfg-mobto" type="number" step="1" min="1" max="100" />
             <small>Range: 1 – 100 minutes</small>
           </label>
+        </div>
+        <div class="vlimit-graph">
+          <div class="vlimit-bar">
+            <div id="mvbar-uv" class="vlimit-zone uv"></div>
+            <div id="mvbar-off" class="vlimit-zone warn"></div>
+            <div id="mvbar-ok" class="vlimit-zone ok"></div>
+            <div id="mvbar-on" class="vlimit-zone info"></div>
+            <div id="mvbar-ov" class="vlimit-zone ov"></div>
+          </div>
+          <div class="vlimit-scale">
+            <span style="left:0%">6</span>
+            <span style="left:16.667%">8</span>
+            <span style="left:33.333%">10</span>
+            <span style="left:50%">12</span>
+            <span style="left:66.667%">14</span>
+            <span style="left:83.333%">16</span>
+            <span style="left:100%">18</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Live State</h2>
+        <div class="state-grid">
+          <div><span class="label">Input Voltage</span><span id="state-voltage" class="value">—</span></div>
+          <div><span class="label">Switch Current</span><span id="state-current" class="value">—</span></div>
+          <div><span class="label">Power Request</span><span id="state-power" class="value">—</span></div>
+          <div><span class="label">Power Switch</span><span id="state-switch" class="value">—</span></div>
+          <div><span class="label">Fault</span><span id="state-fault" class="value">—</span></div>
+          <div><span class="label">OC Retries</span><span id="state-retries" class="value">—</span></div>
+          <div><span class="label">Watchdog</span><span id="state-wd" class="value">—</span></div>
+          <div><span class="label">Firmware Version</span><span id="state-fwver" class="value">—</span></div>
+          <div><span class="label">DCN ADDR Switch</span><span id="state-addrsw" class="value">—</span></div>
+          <div><span class="label">SET Switch</span><span id="state-setsw" class="value">—</span></div>
         </div>
       </section>
 
