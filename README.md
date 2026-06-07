@@ -24,6 +24,10 @@ and the SPS-1's broadcast DCN command set
   by an overlay that automatically clears when the switch returns to idle.
 - All values are shown in user-friendly units (decimal volts, decimal amps,
   ON / OFF, Enabled / Disabled, Pushbutton / Toggle, hex address).
+- **Firmware update via bootloader** (SPS-1 v2.0 and later): flash a new
+  application image over the same serial port using the
+  [DCN-AVR-EA-Bootloader](https://github.com/wa2ivd/DCN-AVR-EA-Bootloader)
+  protocol. See the "Firmware Update" section below.
 
 ## Browser requirements
 
@@ -47,6 +51,60 @@ access serial ports.
 The SPS-1 only accepts SET commands while the switch is **idle** (DCN Enable
 and Local Enable both OFF). If the switch is enabled while the page is open,
 a warning overlay appears and clears automatically when it returns to idle.
+
+## Firmware Update
+
+SPS-1 firmware **2.0 and later** runs under the
+[DCN-AVR-EA-Bootloader](https://github.com/wa2ivd/DCN-AVR-EA-Bootloader).
+This tool can drive a firmware update over the existing serial connection,
+no separate utility needed.
+
+### What you need
+
+- An `SPS-1.X.production_BL.hex` file from the firmware build (the
+  bootloader-compatible image with a CRC trailer at `0xFFFE` — **not** the
+  raw `.hex`).
+- The SPS-1 connected to the serial port and powered.
+- Physical access to the SPS-1's BCD ADDR switch.
+
+### Procedure
+
+1. **Put the SPS-1 in bootloader mode.** Set the BCD ADDR switch to
+   position **F** (15, all four switches ON), then power-cycle the SPS-1.
+   The bootloader catches the reset and waits for commands instead of
+   running the application.
+2. **Open this tool**, click **Connect**, and pick the serial port.
+   (The live state and config sections will be empty because the
+   application isn't running — that's expected.)
+3. **Scroll to the "Firmware Update" section** and click
+   **Update Firmware…**.
+4. In the modal that opens, click the file picker and choose the
+   `SPS-1.X.production_BL.hex` file.
+5. Click **Begin Update**. The tool will:
+   - Probe the bootloader (BLINFO) to confirm it's responding.
+   - Erase the application region.
+   - Write the new image page by page (about 2½ minutes for a full
+     ~60 KB image at 9600 baud — a progress bar tracks each page).
+   - Verify the whole-image CRC (BLVERIFY).
+   - Reset the device (BLRESET).
+6. **Return the BCD ADDR switch to its normal operating position**, then
+   close the dialog. The new application boots on the next reset.
+
+### Safety notes
+
+- Do not close the page, disconnect the cable, or power off the SPS-1
+  during the update. A partial flash leaves the device with no valid
+  application; the bootloader will stay resident on every reset, so
+  recovery is "set switch to F, power-cycle, run the update again" —
+  but only if you can get back to a known starting point.
+- The bootloader will only commit the new CRC trailer on a successful
+  BLVERIFY. If verification fails, the previous CRC trailer stays in
+  place and the device boots as before — but the application region's
+  flash is whatever the partial write left behind, which may not match
+  the previous image either. Always re-flash a known-good image after
+  any failure.
+- Firmware update is **not available in Simulate mode** — the bootloader
+  protocol requires a real serial connection to a real device.
 
 ## Hosting on GitHub Pages
 
