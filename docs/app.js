@@ -107,6 +107,10 @@ let simulating = false;
 // Set while a multi-step command sequence is running so the STATE
 // poll doesn't interleave between e.g. OCSET and the follow-up CONFIG.
 let suppressPoll = false;
+// Mutex for user-triggered command bursts (UPDATE, Refresh, Reset Logs,
+// CALSET, etc.). When set, additional button clicks that would send to
+// the port are dropped so two bursts can't interleave on the wire.
+let cmdBusy = false;
 
 let original = null;
 // Address of the SPS-1 we're currently talking to, taken from the "from"
@@ -490,6 +494,23 @@ const parseIntSafe = (s) => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Run a command burst exclusively. If another burst is already running,
+// the click is dropped (silent no-op). Suppresses the STATE poll for the
+// duration so the burst's CONFIG/STATE replies aren't interleaved with
+// polled UPDATE responses on the wire.
+async function runExclusive(fn) {
+  if (cmdBusy) return false;
+  cmdBusy = true;
+  suppressPoll = true;
+  try {
+    await fn();
+    return true;
+  } finally {
+    cmdBusy = false;
+    suppressPoll = false;
+  }
+}
+
 // ---------- Initial queries / polling ----------
 async function initialQueries() {
   suppressPoll = true;
@@ -533,10 +554,12 @@ refreshBtn.addEventListener('click', async () => {
     setTimeout(() => { updateStatus.textContent = ''; }, 3000);
     return;
   }
-  setStatus('Refreshing configuration…');
-  await send('CONFIG');
-  await sleep(120);
-  await send('STATE');
+  await runExclusive(async () => {
+    setStatus('Refreshing configuration…');
+    await send('CONFIG');
+    await sleep(120);
+    await send('STATE');
+  });
 });
 
 revertBtn.addEventListener('click', () => {
@@ -547,7 +570,9 @@ revertBtn.addEventListener('click', () => {
   setTimeout(() => { updateStatus.textContent = ''; }, 3000);
 });
 
-refreshLogsBtn.addEventListener('click', () => send('LOGS'));
+refreshLogsBtn.addEventListener('click', () => {
+  runExclusive(() => send('LOGS'));
+});
 
 // ---------- UPDATE flow ----------
 function validateInputs(d) {
@@ -588,8 +613,9 @@ function validateInputs(d) {
   }
   if (d.addr) {
     const a = (inputs.addr.value || '').toUpperCase();
-    if (!/^[0-9A-F]{1,2}$/.test(a) || parseInt(a, 16) === 0) {
-      errors.push('DCN address must be 1–2 hex digits (01–FF). 00 is not allowed.');
+    const aVal = parseInt(a, 16);
+    if (!/^[0-9A-F]{1,2}$/.test(a) || aVal === 0x00 || aVal === 0xBB) {
+      errors.push('DCN address must be 1–2 hex digits (01–FF). 00 and BB are reserved and not allowed.');
     }
   }
   if (d.cal) {
@@ -632,7 +658,7 @@ updateBtn.addEventListener('click', async () => {
     return;
   }
 
-  await sendUpdates(d);
+  await runExclusive(() => sendUpdates(d));
 });
 
 calsetCancel.addEventListener('click', () => {
@@ -648,13 +674,12 @@ calsetCancel.addEventListener('click', () => {
 
 calsetConfirm.addEventListener('click', async () => {
   calsetModal.setAttribute('hidden', '');
-  await sendUpdates(dirtyMap());
+  await runExclusive(() => sendUpdates(dirtyMap()));
 });
 
 async function sendUpdates(d) {
   updateBtn.disabled = true;
   updateStatus.textContent = 'Sending updates…';
-  suppressPoll = true;
   try {
     if (d.uvset)  await send(`UVSET,${parseVoltsMv(inputs.uvset.value)}`);
     await sleep(80);
@@ -671,10 +696,17 @@ async function sendUpdates(d) {
 
     if (d.moben || d.moboff || d.mobon || d.mobto) {
       const e = inputs.moben.value;
-      const off = parseVoltsMv(inputs.moboff.value);
-      const on = parseVoltsMv(inputs.mobon.value);
-      const to = parseIntSafe(inputs.mobto.value);
-      await send(`MOBSET,${e},${off},${on},${to}`);
+      if (e === '0') {
+        // Firmware quirk: with Mobile Mode disabled the SPS-1 expects a
+        // single-parameter form. Sending the trailing thresholds/timeout
+        // makes it silently reject the entire command.
+        await send('MOBSET,0');
+      } else {
+        const off = parseVoltsMv(inputs.moboff.value);
+        const on = parseVoltsMv(inputs.mobon.value);
+        const to = parseIntSafe(inputs.mobto.value);
+        await send(`MOBSET,${e},${off},${on},${to}`);
+      }
       await sleep(80);
     }
 
@@ -702,7 +734,6 @@ async function sendUpdates(d) {
     await sleep(150);
     await send('STATE');
   } finally {
-    suppressPoll = false;
     updateBtn.disabled = false;
   }
   updateStatus.textContent = 'Update sent. Re-reading from device…';
@@ -721,9 +752,11 @@ rstlogsCancel.addEventListener('click', () => {
 });
 rstlogsConfirm.addEventListener('click', async () => {
   rstlogsModal.setAttribute('hidden', '');
-  await send('RSTLOGS');
-  await sleep(150);
-  await send('LOGS');
+  await runExclusive(async () => {
+    await send('RSTLOGS');
+    await sleep(150);
+    await send('LOGS');
+  });
 });
 
 // ---------- Simulate mode ----------
@@ -1251,6 +1284,9 @@ fwupdateCloseBtn.addEventListener('click', () => {
 
 fwupdateStart.addEventListener('click', async () => {
   if (!pickedHexText) return;
+  if (cmdBusy) return;
+  cmdBusy = true;
+  suppressPoll = true;
   // Disable Cancel during the update — closing mid-flash would corrupt
   // the device. The Close button on the result phase replaces it.
   fwupdateCancel.disabled = true;
@@ -1287,6 +1323,8 @@ fwupdateStart.addEventListener('click', async () => {
     fwupdateCancel.disabled = false;
     fwupdatePhaseProg.setAttribute('hidden', '');
     fwupdatePhaseDone.removeAttribute('hidden');
+    cmdBusy = false;
+    suppressPoll = false;
   }
 });
 
