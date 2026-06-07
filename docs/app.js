@@ -260,6 +260,17 @@ async function send(cmd) {
 // ---------- Protocol parser ----------
 function handleLine(line) {
   appendLog(`< ${line}`);
+  // During a bootloader firmware update we hand every incoming line to
+  // the bootloader exchange's pending promise instead of running it
+  // through the application-protocol switch below. Bootloader responses
+  // use space-separated payload fields and a different keyword set
+  // (BLACK/BLNAK), which wouldn't survive the comma-split anyway.
+  if (bootloaderMode) {
+    if (bootloaderResolver) {
+      try { bootloaderResolver(line); } catch (err) { /* swallow */ }
+    }
+    return;
+  }
   const m = line.match(/^\/([0-9A-Fa-f]{2,4}):(.+):[^:]*$/);
   if (!m) return;
   // First 2 hex digits of the prefix are the "from" address — the actual
@@ -844,3 +855,445 @@ simulateBtn.addEventListener('click', async () => {
   await initialQueries();
   startPolling();
 });
+
+// ============================================================
+// Firmware update via bootloader
+// ============================================================
+//
+// The DCN-AVR-EA-Bootloader speaks a different DCN subset than the
+// application: addressed frames (/00BB:body:XX\r), space-separated
+// payload fields, and a distinct keyword set (BLINFO / BLERASE /
+// BLDATA / BLVERIFY / BLRESET, with BLACK / BLNAK responses). See the
+// bootloader repo's docs/PROTOCOL.md for the wire-level reference.
+//
+// We piggy-back on the existing serial connection: the readLoop keeps
+// feeding lines into handleLine(), which routes them to bootloaderResolver
+// while bootloaderMode is true. STATE polling is suspended for the
+// duration of the update.
+
+const BL_TARGET_ADDR = 0xBB;  // SPS-1 bootloader's fixed DCN address
+const BL_HOST_ADDR   = 0x00;  // Conventional host address
+
+let bootloaderMode = false;
+let bootloaderResolver = null;  // function(line) called for each rx line
+let pickedHexText = null;
+
+// ---- CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, no reflect/xorout) ----
+function crc16ccittFalse(bytes, crc = 0xFFFF) {
+  for (let i = 0; i < bytes.length; i++) {
+    crc ^= bytes[i] << 8;
+    for (let j = 0; j < 8; j++) {
+      crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) & 0xFFFF : (crc << 1) & 0xFFFF;
+    }
+  }
+  return crc;
+}
+
+// ---- Intel HEX parser ----
+// Returns a Map<absoluteByteAddress, byteValue>. Handles record types
+// 0x00 (data) and 0x04 (extended linear address). EOF (0x01) terminates.
+// Other types are ignored. Throws on bad checksum or malformed lines.
+function parseIntelHex(text) {
+  const data = new Map();
+  let ext = 0;
+  const lines = text.split(/\r?\n/);
+  for (let lineno = 0; lineno < lines.length; lineno++) {
+    const line = lines[lineno].trim();
+    if (!line.startsWith(':')) continue;
+    if (line.length < 11 || (line.length - 1) % 2 !== 0) {
+      throw new Error(`hex line ${lineno + 1}: malformed`);
+    }
+    const bytes = [];
+    for (let i = 1; i < line.length; i += 2) {
+      const b = parseInt(line.substr(i, 2), 16);
+      if (!Number.isFinite(b)) throw new Error(`hex line ${lineno + 1}: bad hex digit`);
+      bytes.push(b);
+    }
+    const count = bytes[0];
+    const addr16 = (bytes[1] << 8) | bytes[2];
+    const rtype = bytes[3];
+    if (bytes.length !== 5 + count) {
+      throw new Error(`hex line ${lineno + 1}: length mismatch`);
+    }
+    let sum = 0;
+    for (let i = 0; i < bytes.length; i++) sum = (sum + bytes[i]) & 0xFF;
+    if (sum !== 0) throw new Error(`hex line ${lineno + 1}: bad checksum`);
+    if (rtype === 0x00) {
+      const base = ext + addr16;
+      for (let i = 0; i < count; i++) data.set(base + i, bytes[4 + i]);
+    } else if (rtype === 0x01) {
+      break;
+    } else if (rtype === 0x04) {
+      ext = ((bytes[4] << 8) | bytes[5]) << 16;
+    }
+  }
+  return data;
+}
+
+const hex2 = (n) => n.toString(16).toUpperCase().padStart(2, '0');
+const hex4 = (n) => n.toString(16).toUpperCase().padStart(4, '0');
+
+// Send a bootloader frame on the wire. No response handling — the caller
+// is responsible for setting bootloaderResolver if it wants the answer.
+async function blSend(body) {
+  const frame = `/${hex2(BL_HOST_ADDR)}${hex2(BL_TARGET_ADDR)}:${body}:XX\r`;
+  // Long BLDATA frames are noisy in the log — truncate the hex middle.
+  const logFrame = body.length > 80
+    ? `/${hex2(BL_HOST_ADDR)}${hex2(BL_TARGET_ADDR)}:${body.slice(0, 25)}…[${body.length - 50}B]…${body.slice(-25)}:XX<CR>`
+    : frame.replace(/\r/g, '<CR>');
+  appendLog(`> ${logFrame}`);
+  await writer.write(new TextEncoder().encode(frame));
+}
+
+// Send a frame and resolve with the first line matching the device→host
+// response prefix. Echoes of our own outbound frame and any other noise
+// are silently dropped.
+async function blExchange(body, timeoutMs = 5000) {
+  if (bootloaderResolver) {
+    throw new Error('Concurrent bootloader exchange — protocol bug.');
+  }
+  const expectedPrefix = `/${hex2(BL_TARGET_ADDR)}${hex2(BL_HOST_ADDR)}:`;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      bootloaderResolver = null;
+      reject(new Error(`Timeout waiting for response to "${body.split(' ')[0]}".`));
+    }, timeoutMs);
+    bootloaderResolver = (line) => {
+      // Ignore the host's own outbound echo and any cross-talk that
+      // doesn't look like the device's reply to us.
+      if (!line.startsWith(expectedPrefix)) return;
+      clearTimeout(timer);
+      bootloaderResolver = null;
+      resolve(line);
+    };
+    blSend(body).catch((err) => {
+      clearTimeout(timer);
+      bootloaderResolver = null;
+      reject(err);
+    });
+  });
+}
+
+// Parse "/<from><to>:KEYWORD field1 field2 ...:XX" into {kw, toks}.
+// toks does NOT include the keyword itself.
+function parseBlResponse(line) {
+  const m = line.match(/^\/[0-9A-F]{4}:(.+):[^:]*$/i);
+  if (!m) throw new Error(`Malformed bootloader response: ${line}`);
+  const tokens = m[1].split(' ');
+  return { kw: tokens[0], toks: tokens.slice(1) };
+}
+
+async function blInfo() {
+  const line = await blExchange('BLINFO', 3000);
+  const { kw, toks } = parseBlResponse(line);
+  if (kw === 'BLNAK') throw new Error(`BLINFO rejected: ${toks.join(' ')}`);
+  if (kw !== 'BLACK' || toks[0] !== 'BLINFO') {
+    throw new Error(`Unexpected BLINFO response: ${line}`);
+  }
+  // Fields per docs/PROTOCOL.md: BLINFO DDDDDD PPPP SSSS EEEE TTTT VVVV C
+  return {
+    deviceId:  toks[1],
+    pageSize:  parseInt(toks[2], 16),
+    appStart:  parseInt(toks[3], 16),
+    flashEnd:  parseInt(toks[4], 16),
+    crcAddr:   parseInt(toks[5], 16),
+    blVersion: parseInt(toks[6], 16),
+    appValid:  toks[7] === '1',
+  };
+}
+
+async function blErase(start, end) {
+  const line = await blExchange(`BLERASE ${hex4(start)} ${hex4(end)}`, 15000);
+  const { kw, toks } = parseBlResponse(line);
+  if (kw === 'BLNAK') {
+    throw new Error(`BLERASE rejected (${toks[0]} ${toks[1] || ''}). The bootloader will not erase that range — confirm the hex targets the application region.`);
+  }
+  if (kw !== 'BLACK' || toks[0] !== 'BLERASE') {
+    throw new Error(`BLERASE failed: ${line}`);
+  }
+}
+
+async function blWritePage(addr, seq, pageBytes) {
+  let hexStr = '';
+  for (let i = 0; i < pageBytes.length; i++) hexStr += hex2(pageBytes[i]);
+  const crc = crc16ccittFalse(pageBytes);
+  const body = `BLDATA ${hex4(addr)} ${hex2(seq & 0xFF)} ${hexStr} ${hex4(crc)}`;
+  const line = await blExchange(body, 5000);
+  const { kw, toks } = parseBlResponse(line);
+  if (kw === 'BLNAK') {
+    throw new Error(`BLDATA rejected at 0x${hex4(addr)} (${toks[0]} ${toks[1] || ''}). The bootloader refused the page.`);
+  }
+  if (kw !== 'BLACK' || toks[0] !== 'BLDATA' || toks.length < 3) {
+    throw new Error(`BLDATA failed at 0x${hex4(addr)}: ${line}`);
+  }
+  if (parseInt(toks[1], 16) !== addr || parseInt(toks[2], 16) !== (seq & 0xFF)) {
+    throw new Error(`BLDATA ack mismatch at 0x${hex4(addr)}: ${line}`);
+  }
+}
+
+async function blVerify(crc) {
+  const line = await blExchange(`BLVERIFY ${hex4(crc)}`, 15000);
+  const { kw, toks } = parseBlResponse(line);
+  if (kw === 'BLNAK') {
+    throw new Error(`BLVERIFY rejected (${toks[0]} ${toks[1] || ''}). The bootloader's recomputed CRC does not match the value we sent — the flash content does not match the source hex.`);
+  }
+  if (kw !== 'BLACK' || toks[0] !== 'BLVERIFY') {
+    throw new Error(`BLVERIFY failed: ${line}`);
+  }
+}
+
+async function blReset() {
+  // Send the reset and don't wait long for the ACK — the bootloader
+  // acknowledges then reboots, so even a missed ACK is fine.
+  await blSend('BLRESET');
+  // Brief settle so the device has time to actually reset before we
+  // resume STATE polling.
+  await sleep(500);
+}
+
+// ---- Orchestrator ----
+async function runFirmwareUpdate(hexText) {
+  if (!writer || !connected || simulating) {
+    throw new Error('Not connected to a real serial port.');
+  }
+
+  // Parse the hex first so a malformed file fails before touching the device.
+  const sparse = parseIntelHex(hexText);
+
+  // Suspend STATE polling so the bootloader has the wire to itself.
+  stopPolling();
+  bootloaderMode = true;
+
+  try {
+    // 1. Probe the bootloader. This also catches "device isn't actually
+    //    in bootloader mode" (switch not at F, or no power-cycle yet).
+    updateFwStatus('Probing bootloader (BLINFO)…', 1);
+    const info = await blInfo();
+    appendLog(
+      `! bootloader online: device=${info.deviceId} page=${info.pageSize} ` +
+      `app=0x${hex4(info.appStart)}..0x${hex4(info.flashEnd)} ` +
+      `crc-addr=0x${hex4(info.crcAddr)} bl=0x${hex4(info.blVersion)} ` +
+      `current-app-valid=${info.appValid}`
+    );
+    updateFwDetail(`Device ID ${info.deviceId}, bootloader v${(info.blVersion >> 8)}.${(info.blVersion & 0xFF).toString().padStart(2, '0')}`);
+
+    // 2. Compute the page-aligned erase range covering the hex content
+    //    inside the application region.
+    const appAddrs = [...sparse.keys()].filter(
+      (a) => a >= info.appStart && a <= info.crcAddr + 1
+    );
+    if (appAddrs.length === 0) {
+      throw new Error(`Hex file contains no bytes in the application region (0x${hex4(info.appStart)}..0x${hex4(info.crcAddr + 1)}). Did you pick the right file?`);
+    }
+    const page = info.pageSize;
+    let eraseStart = Math.floor(Math.min(...appAddrs) / page) * page;
+    let eraseEnd = (Math.floor(Math.max(...appAddrs) / page) + 1) * page - 1;
+    if (eraseStart < info.appStart) eraseStart = info.appStart;
+    if (eraseEnd > info.flashEnd) eraseEnd = info.flashEnd;
+
+    // 3. Compute the expected verify CRC (covers [appStart, crcAddr)).
+    //    Bytes outside the hex default to 0xFF, matching what the
+    //    bootloader sees in erased flash.
+    const bodyLen = info.crcAddr - info.appStart;
+    const bodyBytes = new Uint8Array(bodyLen);
+    for (let i = 0; i < bodyLen; i++) {
+      bodyBytes[i] = sparse.has(info.appStart + i) ? sparse.get(info.appStart + i) : 0xFF;
+    }
+    const expectedCrc = crc16ccittFalse(bodyBytes);
+    const bakedLo = sparse.has(info.crcAddr)     ? sparse.get(info.crcAddr)     : 0xFF;
+    const bakedHi = sparse.has(info.crcAddr + 1) ? sparse.get(info.crcAddr + 1) : 0xFF;
+    const bakedCrc = bakedLo | (bakedHi << 8);
+    if (bakedCrc !== expectedCrc) {
+      appendLog(`! note: hex trailer 0x${hex4(bakedCrc)} ≠ recomputed CRC 0x${hex4(expectedCrc)} — using recomputed value (host).`);
+    }
+
+    // 4. Erase the application region.
+    updateFwStatus(`Erasing 0x${hex4(eraseStart)}..0x${hex4(eraseEnd)}…`, 3);
+    await blErase(eraseStart, eraseEnd);
+
+    // 5. Walk the page list and write any page that contains non-FF data.
+    const pagePlan = [];
+    for (let paddr = eraseStart; paddr <= eraseEnd; paddr += page) {
+      const pageBytes = new Uint8Array(page);
+      let any = false;
+      for (let i = 0; i < page; i++) {
+        const b = sparse.get(paddr + i);
+        if (b !== undefined) { pageBytes[i] = b; if (b !== 0xFF) any = true; }
+        else pageBytes[i] = 0xFF;
+      }
+      if (any) pagePlan.push({ addr: paddr, bytes: pageBytes });
+    }
+    const pagesToWrite = pagePlan.length;
+    let pagesWritten = 0;
+    let seq = 0;
+    for (const { addr, bytes } of pagePlan) {
+      const pct = 5 + Math.round(85 * pagesWritten / Math.max(1, pagesToWrite));
+      updateFwStatus(`Writing page ${pagesWritten + 1} of ${pagesToWrite}…`, pct);
+      updateFwDetail(`Page address 0x${hex4(addr)}`);
+      await blWritePage(addr, seq, bytes);
+      seq = (seq + 1) & 0xFF;
+      pagesWritten++;
+    }
+
+    // 6. Verify the whole image CRC. The bootloader commits the trailer
+    //    on success, which is what lets it boot the new app on the next
+    //    reset.
+    updateFwStatus('Verifying (BLVERIFY)…', 92);
+    updateFwDetail(`Expected CRC 0x${hex4(expectedCrc)}`);
+    await blVerify(expectedCrc);
+
+    // 7. Reset. The device reboots; if the operator has returned the
+    //    switch to its normal position the new application boots, else
+    //    the bootloader stays resident.
+    updateFwStatus('Resetting device (BLRESET)…', 98);
+    await blReset();
+    updateFwStatus('Update complete.', 100);
+
+    return { pagesWritten, expectedCrc, info };
+  } finally {
+    bootloaderMode = false;
+    bootloaderResolver = null;
+    // Resume STATE polling shortly. If the operator moved the switch
+    // back to the device's normal address, the SPS-1 will start
+    // answering UPDATE polls again and the UI will reflect that.
+    setTimeout(() => { if (connected) startPolling(); }, 2000);
+  }
+}
+
+// ---- UI wiring ----
+const fwupdateBtn         = $('btn-fwupdate');
+const fwupdateModal       = $('fwupdate-modal');
+const fwupdateFile        = $('fwupdate-file');
+const fwupdateFileinfo    = $('fwupdate-fileinfo');
+const fwupdateStart       = $('fwupdate-start');
+const fwupdateCancel      = $('fwupdate-cancel');
+const fwupdateCloseBtn    = $('fwupdate-close');
+const fwupdatePhasePick   = $('fwupdate-phase-pick');
+const fwupdatePhaseProg   = $('fwupdate-phase-progress');
+const fwupdatePhaseDone   = $('fwupdate-phase-done');
+const fwupdateStatus      = $('fwupdate-status');
+const fwupdateProgress    = $('fwupdate-progress');
+const fwupdateDetail      = $('fwupdate-detail');
+const fwupdateResult      = $('fwupdate-result');
+
+function updateFwStatus(msg, pct) {
+  if (fwupdateStatus) fwupdateStatus.textContent = msg;
+  if (fwupdateProgress && Number.isFinite(pct)) fwupdateProgress.value = pct;
+}
+function updateFwDetail(msg) {
+  if (fwupdateDetail) fwupdateDetail.textContent = msg || '';
+}
+
+function resetFwModalState() {
+  pickedHexText = null;
+  if (fwupdateFile) fwupdateFile.value = '';
+  if (fwupdateFileinfo) fwupdateFileinfo.textContent = '';
+  if (fwupdateStart) fwupdateStart.disabled = true;
+  fwupdatePhasePick.removeAttribute('hidden');
+  fwupdatePhaseProg.setAttribute('hidden', '');
+  fwupdatePhaseDone.setAttribute('hidden', '');
+  updateFwStatus('', 0);
+  updateFwDetail('');
+}
+
+fwupdateBtn.addEventListener('click', () => {
+  if (!connected) {
+    updateStatus.textContent = 'Connect to the SPS-1 first.';
+    setTimeout(() => { updateStatus.textContent = ''; }, 3000);
+    return;
+  }
+  if (simulating) {
+    updateStatus.textContent = 'Firmware update is not available in Simulate mode.';
+    setTimeout(() => { updateStatus.textContent = ''; }, 3000);
+    return;
+  }
+  resetFwModalState();
+  fwupdateModal.removeAttribute('hidden');
+});
+
+fwupdateFile.addEventListener('change', async () => {
+  const file = fwupdateFile.files[0];
+  if (!file) { pickedHexText = null; fwupdateStart.disabled = true; return; }
+  try {
+    pickedHexText = await file.text();
+    const sparse = parseIntelHex(pickedHexText);
+    const addrs = [...sparse.keys()];
+    // App-region heuristic — we don't have BLINFO yet so guess 0x1000..0xFFFD.
+    // The real bounds get re-checked from BLINFO at update time.
+    const inApp = addrs.filter((a) => a >= 0x1000 && a <= 0xFFFD).length;
+    const trailerPresent = sparse.has(0xFFFE) || sparse.has(0xFFFF);
+    fwupdateFileinfo.innerHTML =
+      `<strong>${file.name}</strong> — ${(file.size / 1024).toFixed(1)} KB<br>` +
+      `${inApp} bytes in application region (0x1000–0xFFFD)` +
+      `${trailerPresent ? ', CRC trailer present at 0xFFFE.' : ', <em>no CRC trailer detected at 0xFFFE — host will compute one</em>.'}`;
+    fwupdateStart.disabled = inApp === 0;
+    if (inApp === 0) {
+      fwupdateFileinfo.innerHTML +=
+        `<br><span style="color:var(--danger)">This file has no bytes in the application region. ` +
+        `Did you pick the wrong hex?</span>`;
+    }
+  } catch (err) {
+    fwupdateFileinfo.textContent = `Error reading hex: ${err.message}`;
+    pickedHexText = null;
+    fwupdateStart.disabled = true;
+  }
+});
+
+fwupdateCancel.addEventListener('click', () => {
+  fwupdateModal.setAttribute('hidden', '');
+  resetFwModalState();
+});
+
+fwupdateCloseBtn.addEventListener('click', () => {
+  fwupdateModal.setAttribute('hidden', '');
+  resetFwModalState();
+});
+
+fwupdateStart.addEventListener('click', async () => {
+  if (!pickedHexText) return;
+  // Disable Cancel during the update — closing mid-flash would corrupt
+  // the device. The Close button on the result phase replaces it.
+  fwupdateCancel.disabled = true;
+  fwupdatePhasePick.setAttribute('hidden', '');
+  fwupdatePhaseProg.removeAttribute('hidden');
+  updateFwStatus('Starting…', 0);
+  try {
+    const result = await runFirmwareUpdate(pickedHexText);
+    fwupdateResult.innerHTML =
+      `<strong style="color:var(--good)">Update succeeded.</strong><br><br>` +
+      `Wrote <strong>${result.pagesWritten}</strong> pages. ` +
+      `Verify CRC <code>0x${hex4(result.expectedCrc)}</code>. ` +
+      `Bootloader v${(result.info.blVersion >> 8)}.${(result.info.blVersion & 0xFF).toString().padStart(2, '0')} ` +
+      `committed the trailer and reset the device.<br><br>` +
+      `<em>Return the BCD ADDR switch to its normal operating position.</em> ` +
+      `The device should resume responding to live state polls within a few ` +
+      `seconds. If it does not, power-cycle once more with the switch in the ` +
+      `correct position.`;
+  } catch (err) {
+    fwupdateResult.innerHTML =
+      `<strong style="color:var(--danger)">Update failed.</strong><br><br>` +
+      `<code>${escapeHtml(err.message)}</code><br><br>` +
+      `If the bootloader never answered (timeout on BLINFO), verify:<br>` +
+      `&nbsp;&nbsp;1. SPS-1 BCD ADDR switch is at position <strong>F</strong> ` +
+      `(15, all four switches on).<br>` +
+      `&nbsp;&nbsp;2. The SPS-1 has been power-cycled <em>since</em> the switch ` +
+      `was moved.<br>` +
+      `&nbsp;&nbsp;3. Exactly one SPS-1 is on the bus.<br><br>` +
+      `If the failure happened mid-way (after some pages wrote), the device ` +
+      `is in recovery mode: the application CRC will fail, so the bootloader ` +
+      `will stay resident on every reset and accept retries. You can simply ` +
+      `Close this dialog and start the update again.`;
+  } finally {
+    fwupdateCancel.disabled = false;
+    fwupdatePhaseProg.setAttribute('hidden', '');
+    fwupdatePhaseDone.removeAttribute('hidden');
+  }
+});
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}

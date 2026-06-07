@@ -185,6 +185,23 @@
       </section>
 
       <section class="card">
+        <h2>Firmware Update</h2>
+        <p class="muted">
+          Flash a new firmware image into the SPS-1 over this serial port
+          using the bootloader. The device must be in bootloader mode
+          (DCN ADDR switch at <strong>F</strong>, power-cycled after) before
+          starting.
+        </p>
+        <div class="action-bar">
+          <button id="btn-fwupdate">Update Firmware…</button>
+          <span class="muted small">
+            Use the <code>SPS-1.X.production_BL.hex</code> file produced by
+            the build, not the raw <code>.hex</code>.
+          </span>
+        </div>
+      </section>
+
+      <section class="card">
         <h2>Serial Trace <button id="btn-toggle-log" class="link">show</button></h2>
         <div id="log" class="log" hidden></div>
       </section>
@@ -267,6 +284,59 @@
         <div class="modal-actions">
           <button id="rstlogs-cancel">Cancel</button>
           <button id="rstlogs-confirm" class="danger">Yes, Reset Logs</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Firmware update modal -->
+    <div id="fwupdate-modal" class="modal" hidden>
+      <div class="modal-card fwupdate-card">
+        <h2>Firmware Update via Bootloader</h2>
+
+        <!-- Phase 1: pick a file -->
+        <div id="fwupdate-phase-pick" class="fwupdate-phase">
+          <p>This uses the SPS-1's DCN bootloader to flash a new firmware
+            image over this serial port. Before continuing:</p>
+          <ol>
+            <li>Set the SPS-1 DCN ADDR switch to position <strong>F</strong>
+              (all four switches ON).</li>
+            <li>Power-cycle the SPS-1 so the bootloader catches the reset.</li>
+            <li>Pick the firmware image below — use the
+              <code>SPS-1.X.production_BL.hex</code> file produced by the
+              build, which carries the bootloader CRC trailer.</li>
+          </ol>
+          <p class="warning-banner">
+            ⚠ Do not disconnect, power off the SPS-1, or close this page
+            during the update. A partial flash leaves the device with no
+            application; only the bootloader's recovery mode can fix it.
+          </p>
+          <div class="fwupdate-file-row">
+            <input type="file" id="fwupdate-file" accept=".hex" />
+          </div>
+          <p id="fwupdate-fileinfo" class="muted small"></p>
+          <div class="modal-actions">
+            <button id="fwupdate-cancel">Cancel</button>
+            <button id="fwupdate-start" class="primary" disabled>Begin Update</button>
+          </div>
+        </div>
+
+        <!-- Phase 2: in-progress -->
+        <div id="fwupdate-phase-progress" class="fwupdate-phase" hidden>
+          <p id="fwupdate-status">Connecting to bootloader…</p>
+          <progress id="fwupdate-progress" value="0" max="100"></progress>
+          <p id="fwupdate-detail" class="muted small"></p>
+          <p class="muted small">
+            A full image is ~60&nbsp;KB and takes approximately 2½&nbsp;minutes
+            to flash at 9600 baud. Please leave this page open.
+          </p>
+        </div>
+
+        <!-- Phase 3: done (success or failure) -->
+        <div id="fwupdate-phase-done" class="fwupdate-phase" hidden>
+          <div id="fwupdate-result"></div>
+          <div class="modal-actions">
+            <button id="fwupdate-close" class="primary">Close</button>
+          </div>
         </div>
       </div>
     </div>
