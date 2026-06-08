@@ -61,16 +61,14 @@ no separate utility needed.
 
 ### What you need
 
-- An `SPS-1.X.production_BL.hex` file from the firmware build (the
-  bootloader-compatible image with a CRC trailer at `0xFFFE` — **not** the
-  raw `.hex`).
+- A .hex file with the latest application firmware update
 - The SPS-1 connected to the serial port and powered.
-- Physical access to the SPS-1's BCD ADDR switch.
+- Physical access to the SPS-1's DCN ADDR switch.
 
 ### Procedure
 
-1. **Put the SPS-1 in bootloader mode.** Set the BCD ADDR switch to
-   position **F** (15, all four switches ON), then power-cycle the SPS-1.
+1. **Put the SPS-1 in bootloader mode.** Set the DCN ADDR switch to
+   position **F**, then power-cycle the SPS-1.
    The bootloader catches the reset and waits for commands instead of
    running the application.
 2. **Open this tool**, click **Connect**, and pick the serial port.
