@@ -230,6 +230,7 @@ main {
 }
 .vlimit-marker.warn { background: #facc15; }
 .vlimit-marker.info { background: #7dd3fc; }
+.vlimit-marker[hidden] { display: none; }
 
 /* Tie each voltage input to its zone color on the bar graph via a left
    accent bar. Uses an inset box-shadow (not border-left) so the .dirty
@@ -450,6 +451,20 @@ button.link {
   font-size: 0.85em;
 }
 .fwupdate-phase[hidden] { display: none; }
+.fwupdate-select-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.5rem 0 0.25rem;
+}
+.fwupdate-select-row select {
+  flex: 1;
+  padding: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #fff;
+}
+.fwupdate-file-row[hidden] { display: none; }
 .fwupdate-file-row {
   display: flex;
   align-items: center;

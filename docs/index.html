@@ -49,13 +49,13 @@
           <div class="field-grid">
             <label>
               <span>Undervoltage Limit (V)</span>
-              <input id="cfg-uvset" class="vlevel-uv" type="number" step="0.001" min="6" max="18" />
-              <small>Range: 6.000 – 18.000 V</small>
+              <input id="cfg-uvset" class="vlevel-uv" type="number" step="0.01" min="6" max="18" />
+              <small>Range: 6.00 – 18.00 V</small>
             </label>
             <label>
               <span>Overvoltage Limit (V)</span>
-              <input id="cfg-ovset" class="vlevel-ov" type="number" step="0.001" min="6" max="18" />
-              <small>Range: 6.000 – 18.000 V</small>
+              <input id="cfg-ovset" class="vlevel-ov" type="number" step="0.01" min="6" max="18" />
+              <small>Range: 6.00 – 18.00 V</small>
             </label>
           </div>
 
@@ -75,13 +75,13 @@
             </label>
             <label>
               <span>Mobile Mode Off Threshold (V)</span>
-              <input id="cfg-moboff" class="vlevel-off" type="number" step="0.001" />
-              <small>Must be ≥ UV limit + 1.000 V</small>
+              <input id="cfg-moboff" class="vlevel-off" type="number" step="0.01" />
+              <small>Must be &gt; UV limit + 1.000 V</small>
             </label>
             <label>
               <span>Mobile Mode On Threshold (V)</span>
-              <input id="cfg-mobon" class="vlevel-on" type="number" step="0.001" />
-              <small>Must be ≤ OV limit − 1.000 V</small>
+              <input id="cfg-mobon" class="vlevel-on" type="number" step="0.01" />
+              <small>Must be &lt; OV limit − 1.000 V</small>
             </label>
           </div>
           <div class="vlimit-graph">
@@ -110,8 +110,8 @@
           <div class="field-grid">
             <label>
               <span>Overcurrent Limit (A)</span>
-              <input id="cfg-ocset" type="number" step="0.001" min="5" max="35" />
-              <small>Range: 5.000 – 35.000 A</small>
+              <input id="cfg-ocset" type="number" step="0.01" min="5" max="35" />
+              <small>Range: 5.00 – 35.00 A</small>
             </label>
             <label>
               <span>Auto-Reset</span>
@@ -317,15 +317,19 @@
         <div id="fwupdate-phase-pick" class="fwupdate-phase">
           <p>This uses the SPS-1's DCN bootloader to flash a new firmware
             image over this serial port.</p>
-          <p>Pick the firmware image below — use the
-            <code>SPS-1.X.production_BL.hex</code> file produced by the
-            build, which carries the bootloader CRC trailer.</p>
+          <p>Choose a bundled firmware image below, or pick a custom
+            <code>.hex</code> file. Bundled images are the approved builds
+            that ship with this tool and carry the bootloader CRC trailer.</p>
           <p class="warning-banner">
             ⚠ Do not disconnect, power off the SPS-1, or close this page
             during the update. A partial flash leaves the device with no
             application; only the bootloader's recovery mode can fix it.
           </p>
-          <div class="fwupdate-file-row">
+          <div class="fwupdate-select-row">
+            <label for="fwupdate-select">Firmware:</label>
+            <select id="fwupdate-select"></select>
+          </div>
+          <div id="fwupdate-file-row" class="fwupdate-file-row" hidden>
             <input type="file" id="fwupdate-file" accept=".hex" />
           </div>
           <p id="fwupdate-fileinfo" class="muted small"></p>

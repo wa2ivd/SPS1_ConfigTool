@@ -1,0 +1,10 @@
+[
+  {
+    "file": "SPS-1_V2.2.0_BL.hex",
+    "version": "2.2.0",
+    "label": "SPS-1 v2.2.0 (includes USB support)",
+    "date": "2026-09-30",
+    "deviceId": "1E9620",
+    "notes": "Bootloader-flashable image with CRC trailer. Set deviceId to the BLINFO device string once known to enable the compatibility guard."
+  }
+]

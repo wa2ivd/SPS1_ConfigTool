@@ -214,7 +214,8 @@ async function detectDevice() {
     // bootloader resolver, so bootloaderMode must be set while we wait.
     bootloaderMode = true;
     try {
-      await blInfo(BLINFO_PROBE_MS);
+      const info = await blInfo(BLINFO_PROBE_MS);
+      lastBlDeviceId = info.deviceId;
       return 'bootloader';
     } catch (err) {
       appendLog(`! no bootloader response: ${err.message}`);
@@ -243,6 +244,7 @@ function onDeviceNotFound() {
 blDetectedContinue.addEventListener('click', () => {
   blDetectedModal.setAttribute('hidden', '');
   resetFwModalState();
+  populateFwSelect();
   fwupdateModal.removeAttribute('hidden');
 });
 
@@ -490,14 +492,14 @@ function formatOnTime(tenths) {
 
 // ---------- Populate inputs from config ----------
 function populateInputs(cfg) {
-  inputs.uvset.value = (cfg.uvset_mv / 1000).toFixed(3);
-  inputs.ovset.value = (cfg.ovset_mv / 1000).toFixed(3);
-  inputs.ocset.value = (cfg.ocset_ma / 1000).toFixed(3);
+  inputs.uvset.value = (cfg.uvset_mv / 1000).toFixed(2);
+  inputs.ovset.value = (cfg.ovset_mv / 1000).toFixed(2);
+  inputs.ocset.value = (cfg.ocset_ma / 1000).toFixed(2);
   inputs.ocauto.value = cfg.ocauto;
   inputs.ocdelay.value = String(cfg.ocdelay);
   inputs.moben.value = cfg.moben;
-  inputs.moboff.value = (cfg.moboff_mv / 1000).toFixed(3);
-  inputs.mobon.value = (cfg.mobon_mv / 1000).toFixed(3);
+  inputs.moboff.value = (cfg.moboff_mv / 1000).toFixed(2);
+  inputs.mobon.value = (cfg.mobon_mv / 1000).toFixed(2);
   inputs.mobto.value = String(cfg.mobto);
   inputs.swmode.value = cfg.swmode;
   inputs.addr.value = cfg.addr;
@@ -539,6 +541,11 @@ function updateMobileGraph() {
   mvbarOk.style.width = `${okPct}%`;
   mvbarOv.style.width = `${ovPct}%`;
   // Markers are centered on their threshold voltage (CSS translateX(-50%)).
+  // With Mobile Mode disabled the Off/On thresholds are inactive, so hide
+  // their markers entirely.
+  const mobEnabled = inputs.moben.value === '1';
+  mvbarOff.hidden = !mobEnabled;
+  mvbarOn.hidden  = !mobEnabled;
   mvbarOff.style.left = `${pctOf(off)}%`;
   mvbarOn.style.left  = `${pctOf(on)}%`;
 }
@@ -580,6 +587,18 @@ for (const el of Object.values(inputs)) {
 for (const key of ['uvset', 'ovset', 'moboff', 'mobon']) {
   inputs[key].addEventListener('input', updateMobileGraph);
 }
+// Mobile Mode enable/disable toggles marker visibility; it's a <select>,
+// so listen for 'change'. A change event only fires on an actual value
+// change, so reaching '1' here always means a Disabled→Enabled transition —
+// seed the thresholds with sensible defaults.
+inputs.moben.addEventListener('change', () => {
+  if (inputs.moben.value === '1') {
+    inputs.moboff.value = (12.8).toFixed(2);
+    inputs.mobon.value  = (13.3).toFixed(2);
+    refreshDirty();
+  }
+  updateMobileGraph();
+});
 
 // ---------- Helpers ----------
 const parseVoltsMv = (s) => {
@@ -698,15 +717,18 @@ function validateInputs(d) {
   if (d.moboff) {
     const moff = parseVoltsMv(inputs.moboff.value);
     const uv = parseVoltsMv(inputs.uvset.value);
-    if (Number.isFinite(moff) && Number.isFinite(uv) && moff < uv + 1000) {
-      errors.push('Mobile-mode Off threshold must be at least 1.000 V above the undervoltage limit.');
+    // Firmware (MOB_MIN_VDIFF) requires off STRICTLY > UV + 1.000 V; matching
+    // the strict comparison here avoids values the device silently rejects.
+    if (Number.isFinite(moff) && Number.isFinite(uv) && moff <= uv + 1000) {
+      errors.push('Mobile-mode Off threshold must be more than 1.000 V above the undervoltage limit.');
     }
   }
   if (d.mobon) {
     const mon = parseVoltsMv(inputs.mobon.value);
     const ov = parseVoltsMv(inputs.ovset.value);
-    if (Number.isFinite(mon) && Number.isFinite(ov) && mon > ov - 1000) {
-      errors.push('Mobile-mode On threshold must be at least 1.000 V below the overvoltage limit.');
+    // Firmware requires on STRICTLY < OV - 1.000 V.
+    if (Number.isFinite(mon) && Number.isFinite(ov) && mon >= ov - 1000) {
+      errors.push('Mobile-mode On threshold must be more than 1.000 V below the overvoltage limit.');
     }
   }
   if (d.mobto) {
@@ -1012,6 +1034,8 @@ const BL_HOST_ADDR   = 0x00;  // Conventional host address
 let bootloaderMode = false;
 let bootloaderResolver = null;  // function(line) called for each rx line
 let pickedHexText = null;
+let lastBlDeviceId = null;      // deviceId from the most recent BLINFO probe
+let fwManifest = null;          // cached firmware manifest (array), null until fetched
 
 // ---- CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, no reflect/xorout) ----
 function crc16ccittFalse(bytes, crc = 0xFFFF) {
@@ -1297,6 +1321,8 @@ async function runFirmwareUpdate(hexText) {
 
 // ---- UI wiring ----
 const fwupdateModal       = $('fwupdate-modal');
+const fwupdateSelect      = $('fwupdate-select');
+const fwupdateFileRow     = $('fwupdate-file-row');
 const fwupdateFile        = $('fwupdate-file');
 const fwupdateFileinfo    = $('fwupdate-fileinfo');
 const fwupdateStart       = $('fwupdate-start');
@@ -1320,6 +1346,8 @@ function updateFwDetail(msg) {
 
 function resetFwModalState() {
   pickedHexText = null;
+  if (fwupdateSelect) fwupdateSelect.value = '';
+  if (fwupdateFileRow) fwupdateFileRow.setAttribute('hidden', '');
   if (fwupdateFile) fwupdateFile.value = '';
   if (fwupdateFileinfo) fwupdateFileinfo.textContent = '';
   if (fwupdateStart) fwupdateStart.disabled = true;
@@ -1330,11 +1358,13 @@ function resetFwModalState() {
   updateFwDetail('');
 }
 
-fwupdateFile.addEventListener('change', async () => {
-  const file = fwupdateFile.files[0];
-  if (!file) { pickedHexText = null; fwupdateStart.disabled = true; return; }
+// Validate hex text from any source (bundled or custom file), show a summary,
+// and enable/disable the Begin button. `deviceId` is the manifest entry's
+// expected device (null for custom files / unconstrained entries); when set it
+// is compared against the last BLINFO probe as a compatibility guard.
+function loadHexText(text, sourceName, sizeBytes, deviceId = null) {
   try {
-    pickedHexText = await file.text();
+    pickedHexText = text;
     const sparse = parseIntelHex(pickedHexText);
     const addrs = [...sparse.keys()];
     // App-region heuristic — we don't have BLINFO yet so guess 0x1000..0xFFFD.
@@ -1342,15 +1372,102 @@ fwupdateFile.addEventListener('change', async () => {
     const inApp = addrs.filter((a) => a >= 0x1000 && a <= 0xFFFD).length;
     const trailerPresent = sparse.has(0xFFFE) || sparse.has(0xFFFF);
     fwupdateFileinfo.innerHTML =
-      `<strong>${file.name}</strong> — ${(file.size / 1024).toFixed(1)} KB<br>` +
+      `<strong>${escapeHtml(sourceName)}</strong> — ${(sizeBytes / 1024).toFixed(1)} KB<br>` +
       `${inApp} bytes in application region (0x1000–0xFFFD)` +
       `${trailerPresent ? ', CRC trailer present at 0xFFFE.' : ', <em>no CRC trailer detected at 0xFFFE — host will compute one</em>.'}`;
-    fwupdateStart.disabled = inApp === 0;
+    // Compatibility guard: only active when the manifest supplies a deviceId
+    // and we captured one from the bootloader probe.
+    const mismatch = deviceId && lastBlDeviceId && deviceId !== lastBlDeviceId;
+    fwupdateStart.disabled = inApp === 0 || mismatch;
     if (inApp === 0) {
       fwupdateFileinfo.innerHTML +=
         `<br><span style="color:var(--danger)">This file has no bytes in the application region. ` +
         `Did you pick the wrong hex?</span>`;
     }
+    if (mismatch) {
+      fwupdateFileinfo.innerHTML +=
+        `<br><span style="color:var(--danger)">This image targets device ` +
+        `<code>${escapeHtml(deviceId)}</code>, but the connected bootloader ` +
+        `reports <code>${escapeHtml(lastBlDeviceId)}</code>. Update blocked.</span>`;
+    }
+  } catch (err) {
+    fwupdateFileinfo.textContent = `Error reading hex: ${err.message}`;
+    pickedHexText = null;
+    fwupdateStart.disabled = true;
+  }
+}
+
+// Populate the firmware <select> from firmware/manifest.json (cached after the
+// first fetch). A trailing "Custom file…" option reveals the file input.
+async function populateFwSelect() {
+  fwupdateSelect.innerHTML = '';
+  if (!fwManifest) {
+    try {
+      // Relative path so it resolves under a GitHub Pages sub-path.
+      const resp = await fetch('firmware/manifest.json', { cache: 'no-cache' });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      fwManifest = await resp.json();
+      if (!Array.isArray(fwManifest)) throw new Error('manifest is not an array');
+    } catch (err) {
+      appendLog(`! could not load firmware manifest: ${err.message}`);
+      fwManifest = [];
+    }
+  }
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = fwManifest.length
+    ? '— Select firmware —'
+    : '— No bundled firmware —';
+  fwupdateSelect.appendChild(placeholder);
+
+  fwManifest.forEach((entry, i) => {
+    const opt = document.createElement('option');
+    opt.value = String(i);
+    opt.textContent = entry.label || entry.file;
+    fwupdateSelect.appendChild(opt);
+  });
+
+  const custom = document.createElement('option');
+  custom.value = 'custom';
+  custom.textContent = 'Custom file…';
+  fwupdateSelect.appendChild(custom);
+}
+
+fwupdateSelect.addEventListener('change', async () => {
+  const val = fwupdateSelect.value;
+  pickedHexText = null;
+  fwupdateStart.disabled = true;
+  fwupdateFileinfo.textContent = '';
+
+  if (val === 'custom') {
+    fwupdateFileRow.removeAttribute('hidden');
+    fwupdateFile.value = '';
+    return;
+  }
+  fwupdateFileRow.setAttribute('hidden', '');
+  if (val === '') return;
+
+  const entry = fwManifest[Number(val)];
+  if (!entry) return;
+  fwupdateFileinfo.textContent = `Loading ${entry.file}…`;
+  try {
+    const resp = await fetch(`firmware/${entry.file}`, { cache: 'no-cache' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const text = await resp.text();
+    loadHexText(text, entry.file, text.length, entry.deviceId || null);
+  } catch (err) {
+    fwupdateFileinfo.textContent = `Error loading ${entry.file}: ${err.message}`;
+    pickedHexText = null;
+    fwupdateStart.disabled = true;
+  }
+});
+
+fwupdateFile.addEventListener('change', async () => {
+  const file = fwupdateFile.files[0];
+  if (!file) { pickedHexText = null; fwupdateStart.disabled = true; return; }
+  try {
+    const text = await file.text();
+    loadHexText(text, file.name, file.size, null);
   } catch (err) {
     fwupdateFileinfo.textContent = `Error reading hex: ${err.message}`;
     pickedHexText = null;
