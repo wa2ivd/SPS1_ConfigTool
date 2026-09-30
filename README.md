@@ -44,6 +44,10 @@ access serial ports.
 1. Open the hosted page in Chrome or Edge.
 2. Connect a single SPS-1 to a USB serial port and apply input power.
 3. Click **Connect** and pick the COM port from the browser's port picker.
+   The tool checks for an SPS-1 on connect: a running device goes straight
+   to the status and config screen, a device in bootloader mode is taken to
+   the firmware update, and if nothing answers a **"No SPS-1 Found"** pop-up
+   appears — click **Disconnect** and try again.
 4. Edit any parameters; modified fields are highlighted.
 5. Click **UPDATE** to send your changes. The tool re-reads the device
    afterwards so you can confirm what was accepted.
@@ -72,11 +76,12 @@ no separate utility needed.
    The bootloader catches the reset and waits for commands instead of
    running the application.
 2. **Open this tool**, click **Connect**, and pick the serial port.
-   (The live state and config sections will be empty because the
-   application isn't running — that's expected.)
-3. **Scroll to the "Firmware Update" section** and click
-   **Update Firmware…**.
-4. In the modal that opens, click the file picker and choose the
+   The tool queries the device on connect. When it finds the bootloader
+   instead of the application, it shows a **"Bootloader Detected"** pop-up
+   and takes you straight to the firmware update — there is no separate
+   button to press.
+3. Click **Continue** on the pop-up to open the firmware update dialog.
+4. In the dialog, click the file picker and choose the
    `SPS-1.X.production_BL.hex` file.
 5. Click **Begin Update**. The tool will:
    - Probe the bootloader (BLINFO) to confirm it's responding.
