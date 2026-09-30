@@ -49,12 +49,12 @@
           <div class="field-grid">
             <label>
               <span>Undervoltage Limit (V)</span>
-              <input id="cfg-uvset" type="number" step="0.001" min="6" max="18" />
+              <input id="cfg-uvset" class="vlevel-uv" type="number" step="0.001" min="6" max="18" />
               <small>Range: 6.000 – 18.000 V</small>
             </label>
             <label>
               <span>Overvoltage Limit (V)</span>
-              <input id="cfg-ovset" type="number" step="0.001" min="6" max="18" />
+              <input id="cfg-ovset" class="vlevel-ov" type="number" step="0.001" min="6" max="18" />
               <small>Range: 6.000 – 18.000 V</small>
             </label>
           </div>
@@ -74,23 +74,23 @@
               <small>Range: 1 – 100 minutes</small>
             </label>
             <label>
-              <span>Off Threshold (V)</span>
-              <input id="cfg-moboff" type="number" step="0.001" />
+              <span>Mobile Mode Off Threshold (V)</span>
+              <input id="cfg-moboff" class="vlevel-off" type="number" step="0.001" />
               <small>Must be ≥ UV limit + 1.000 V</small>
             </label>
             <label>
-              <span>On Threshold (V)</span>
-              <input id="cfg-mobon" type="number" step="0.001" />
+              <span>Mobile Mode On Threshold (V)</span>
+              <input id="cfg-mobon" class="vlevel-on" type="number" step="0.001" />
               <small>Must be ≤ OV limit − 1.000 V</small>
             </label>
           </div>
           <div class="vlimit-graph">
             <div class="vlimit-bar">
               <div id="mvbar-uv" class="vlimit-zone uv"></div>
-              <div id="mvbar-off" class="vlimit-zone warn"></div>
               <div id="mvbar-ok" class="vlimit-zone ok"></div>
-              <div id="mvbar-on" class="vlimit-zone info"></div>
               <div id="mvbar-ov" class="vlimit-zone ov"></div>
+              <div id="mvbar-off" class="vlimit-marker warn"></div>
+              <div id="mvbar-on" class="vlimit-marker info"></div>
             </div>
             <div class="vlimit-scale">
               <span style="left:0%">6</span>
@@ -193,19 +193,6 @@
       </section>
 
       <section class="card">
-        <h2><span>Firmware Update <small class="header-note">(Only available for firmware versions 2.0 and later)</small></span></h2>
-        <p class="muted">
-          Flash a new firmware image into the SPS-1 over this serial port
-          using the bootloader. The device must be in bootloader mode
-          (DCN ADDR switch at <strong>F</strong>, power-cycled after) before
-          starting.
-        </p>
-        <div class="action-bar">
-          <button id="btn-fwupdate">Update Firmware…</button>
-        </div>
-      </section>
-
-      <section class="card">
         <h2>Serial Trace <button id="btn-toggle-log" class="link">show</button></h2>
         <div id="log" class="log" hidden></div>
       </section>
@@ -261,6 +248,35 @@
       </div>
     </div>
 
+    <!-- Bootloader detected -->
+    <div id="bl-detected-modal" class="modal" hidden>
+      <div class="modal-card warning">
+        <h2>Bootloader Detected</h2>
+        <p>An SPS-1 <strong>bootloader</strong> responded on this port. The device is
+          in firmware-update mode and is not running the application, so the normal
+          status and configuration functions are unavailable.</p>
+        <p>Click Continue to proceed to the firmware update.</p>
+        <div class="modal-actions">
+          <button id="bl-detected-continue" class="primary">Continue</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- No device found -->
+    <div id="nodevice-modal" class="modal" hidden>
+      <div class="modal-card warning">
+        <h2>No SPS-1 Found</h2>
+        <p>No response was received from the selected serial port to either the
+          application query or the bootloader query.</p>
+        <p>Verify that the SPS-1 is powered, that exactly one unit is connected, and
+          that you selected the correct serial port. Then click Disconnect and try
+          again.</p>
+        <div class="modal-actions">
+          <button id="nodevice-disconnect" class="primary">Disconnect</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Confirm CALSET change -->
     <div id="confirm-calset" class="modal" hidden>
       <div class="modal-card warning">
@@ -300,15 +316,10 @@
         <!-- Phase 1: pick a file -->
         <div id="fwupdate-phase-pick" class="fwupdate-phase">
           <p>This uses the SPS-1's DCN bootloader to flash a new firmware
-            image over this serial port. Before continuing:</p>
-          <ol>
-            <li>Set the SPS-1 DCN ADDR switch to position <strong>F</strong>
-              (all four switches ON).</li>
-            <li>Power-cycle the SPS-1 so the bootloader catches the reset.</li>
-            <li>Pick the firmware image below — use the
-              <code>SPS-1.X.production_BL.hex</code> file produced by the
-              build, which carries the bootloader CRC trailer.</li>
-          </ol>
+            image over this serial port.</p>
+          <p>Pick the firmware image below — use the
+            <code>SPS-1.X.production_BL.hex</code> file produced by the
+            build, which carries the bootloader CRC trailer.</p>
           <p class="warning-banner">
             ⚠ Do not disconnect, power off the SPS-1, or close this page
             during the update. A partial flash leaves the device with no

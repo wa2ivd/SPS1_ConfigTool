@@ -200,6 +200,7 @@ main {
   margin-top: 1rem;
 }
 .vlimit-bar {
+  position: relative;
   display: flex;
   width: 100%;
   height: 1.5rem;
@@ -212,11 +213,31 @@ main {
   height: 100%;
   transition: width 0.15s ease;
 }
-.vlimit-zone.uv,
+.vlimit-zone.uv { background: #1e40af; }
 .vlimit-zone.ov { background: #ef4444; }
 .vlimit-zone.ok { background: #22c55e; }
-.vlimit-zone.warn { background: #facc15; }
-.vlimit-zone.info { background: #7dd3fc; }
+
+/* Thin vertical markers (~0.1 V wide) at the Mobile Mode Off / On
+   thresholds, overlaid on the green operating band. Centered on their
+   threshold voltage via translateX(-50%). */
+.vlimit-marker {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  width: 0.833%; /* 0.1 V of the 6–18 V span */
+  transform: translateX(-50%);
+  transition: left 0.15s ease;
+}
+.vlimit-marker.warn { background: #facc15; }
+.vlimit-marker.info { background: #7dd3fc; }
+
+/* Tie each voltage input to its zone color on the bar graph via a left
+   accent bar. Uses an inset box-shadow (not border-left) so the .dirty
+   border/background highlight still shows through unchanged. */
+.field-grid input.vlevel-uv  { box-shadow: inset 6px 0 0 0 #1e40af; }
+.field-grid input.vlevel-off { box-shadow: inset 6px 0 0 0 #facc15; }
+.field-grid input.vlevel-on  { box-shadow: inset 6px 0 0 0 #7dd3fc; }
+.field-grid input.vlevel-ov  { box-shadow: inset 6px 0 0 0 #ef4444; }
 .vlimit-scale {
   position: relative;
   height: 1.6rem;

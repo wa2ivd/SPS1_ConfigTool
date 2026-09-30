@@ -23,6 +23,11 @@ const welcomeModal = $('welcome-modal');
 const welcomeContinue = $('welcome-continue');
 const unsupportedModal = $('unsupported-modal');
 
+const blDetectedModal = $('bl-detected-modal');
+const blDetectedContinue = $('bl-detected-continue');
+const nodeviceModal = $('nodevice-modal');
+const nodeviceDisconnect = $('nodevice-disconnect');
+
 const powerWarning = $('power-warning');
 const pwPower = $('pw-power');
 
@@ -156,14 +161,100 @@ async function openPort() {
   connectBtn.disabled = true;
   simulateBtn.disabled = true;
   disconnectBtn.disabled = false;
-  setStatus('Connected. Querying SPS-1…');
+  setStatus('Connected. Detecting device…');
   readLoop();
-  await initialQueries();
-  startPolling();
+
+  const kind = await detectDevice();
+  if (kind === 'app') {
+    setStatus('SPS-1 found — reading configuration…');
+    await initialQueries();
+    startPolling();
+  } else if (kind === 'bootloader') {
+    onBootloaderDetected();
+  } else {
+    onDeviceNotFound();
+  }
 }
+
+// Detection timeouts. The application must answer a CONFIG query within
+// CONFIG_PROBE_MS; if it doesn't we fall back to a BLINFO probe for a
+// resident bootloader. The bootloader can be slow to answer on first
+// contact (observed well over 500 ms), so BLINFO gets a generous window —
+// this only lengthens the bootloader / no-device paths, not the fast
+// app-running path.
+const CONFIG_PROBE_MS = 250;
+const BLINFO_PROBE_MS = 2000;
+
+// Poll `pred` until it returns truthy or `timeoutMs` elapses. Resolves to
+// the final predicate value.
+async function waitFor(pred, timeoutMs, stepMs = 20) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (pred()) return true;
+    await sleep(stepMs);
+  }
+  return !!pred();
+}
+
+// Probe the freshly opened port to decide what's on the other end:
+//   'app'        — an SPS-1 running the application (answered CONFIG)
+//   'bootloader' — an SPS-1 in bootloader mode (answered BLINFO)
+//   'none'       — neither query got a valid response
+async function detectDevice() {
+  suppressPoll = true;
+  try {
+    // Phase 1: application CONFIG query. handleSettings() sets `original`
+    // when a valid SETTINGS reply arrives.
+    original = null;
+    await send('CONFIG');
+    if (await waitFor(() => original !== null, CONFIG_PROBE_MS)) {
+      return 'app';
+    }
+    // Phase 2: bootloader BLINFO query. blInfo() routes through the
+    // bootloader resolver, so bootloaderMode must be set while we wait.
+    bootloaderMode = true;
+    try {
+      await blInfo(BLINFO_PROBE_MS);
+      return 'bootloader';
+    } catch (err) {
+      appendLog(`! no bootloader response: ${err.message}`);
+      return 'none';
+    } finally {
+      bootloaderMode = false;
+      bootloaderResolver = null;
+    }
+  } finally {
+    suppressPoll = false;
+  }
+}
+
+function onBootloaderDetected() {
+  setStatus('Bootloader detected — firmware update mode');
+  blDetectedModal.removeAttribute('hidden');
+}
+
+function onDeviceNotFound() {
+  setStatus('No SPS-1 found on this port');
+  nodeviceModal.removeAttribute('hidden');
+}
+
+// Continue from the "bootloader detected" popup straight into the
+// firmware update dialog.
+blDetectedContinue.addEventListener('click', () => {
+  blDetectedModal.setAttribute('hidden', '');
+  resetFwModalState();
+  fwupdateModal.removeAttribute('hidden');
+});
+
+// The "device not found" popup's button behaves like Disconnect.
+nodeviceDisconnect.addEventListener('click', closePort);
 
 async function closePort() {
   stopPolling();
+  // Clear any detection pop-ups so the user can re-attempt a connection.
+  blDetectedModal.setAttribute('hidden', '');
+  nodeviceModal.setAttribute('hidden', '');
+  fwupdateModal.setAttribute('hidden', '');
   if (simulating) {
     simulating = false;
     connected = false;
@@ -262,8 +353,16 @@ async function send(cmd) {
 }
 
 // ---------- Protocol parser ----------
-function handleLine(line) {
-  appendLog(`< ${line}`);
+function handleLine(rawLine) {
+  appendLog(`< ${rawLine}`);
+  // A freshly reset or newly plugged-in SPS-1 can emit a stray byte (line
+  // noise / a boot glitch) ahead of its first framed reply. Every valid
+  // frame — application (/ff:...) and bootloader (/fftt:...) alike — begins
+  // with '/', so drop anything before the first '/'. A line with no '/' at
+  // all is pure noise and is ignored.
+  const slash = rawLine.indexOf('/');
+  if (slash === -1) return;
+  const line = rawLine.slice(slash);
   // During a bootloader firmware update we hand every incoming line to
   // the bootloader exchange's pending promise instead of running it
   // through the application-protocol switch below. Bootloader responses
@@ -414,9 +513,10 @@ const VGRAPH_SPAN = VGRAPH_MAX - VGRAPH_MIN;
 const clampV = (v) => Math.min(Math.max(v, VGRAPH_MIN), VGRAPH_MAX);
 const pctOf = (v) => ((v - VGRAPH_MIN) / VGRAPH_SPAN) * 100;
 
-// Mobile Mode: red up to the UV limit, yellow from UV to the Off
-// threshold, green from Off to On, light blue from On to the OV limit,
-// red from the OV limit to the right edge.
+// Mobile Mode graph: dark blue up to the UV limit (undervoltage), green
+// across the UV→OV operating band, red above the OV limit (overvoltage).
+// Thin vertical markers sit on the green band at the Mobile Mode Off
+// (yellow) and On (light blue) thresholds.
 function updateMobileGraph() {
   let uv = parseFloat(inputs.uvset.value);
   let ov = parseFloat(inputs.ovset.value);
@@ -426,19 +526,21 @@ function updateMobileGraph() {
   ov = clampV(Number.isFinite(ov) ? ov : VGRAPH_MAX);
   off = clampV(Number.isFinite(off) ? off : uv);
   on = clampV(Number.isFinite(on) ? on : ov);
-  // Enforce left-to-right ordering: uv ≤ off ≤ on ≤ ov.
+  // Enforce left-to-right ordering so the markers stay on the green band:
+  // uv ≤ off ≤ on ≤ ov.
   if (off < uv) off = uv;
   if (on < off) on = off;
   if (ov < on) ov = on;
-  const uvPct = pctOf(uv);
-  const offPct = pctOf(off) - uvPct;
-  const onPct = pctOf(on) - pctOf(off);
-  const ovPct = 100 - pctOf(ov);
+  // Three contiguous zones: dark blue, green, red.
+  const uvPct = pctOf(uv);             // 6 V → UV limit   (dark blue)
+  const okPct = pctOf(ov) - pctOf(uv); // UV limit → OV    (green)
+  const ovPct = 100 - pctOf(ov);       // OV limit → 18 V  (red)
   mvbarUv.style.width = `${uvPct}%`;
-  mvbarOff.style.width = `${offPct}%`;
-  mvbarOn.style.width = `${onPct}%`;
+  mvbarOk.style.width = `${okPct}%`;
   mvbarOv.style.width = `${ovPct}%`;
-  mvbarOk.style.width = `${100 - uvPct - offPct - onPct - ovPct}%`;
+  // Markers are centered on their threshold voltage (CSS translateX(-50%)).
+  mvbarOff.style.left = `${pctOf(off)}%`;
+  mvbarOn.style.left  = `${pctOf(on)}%`;
 }
 
 // ---------- Dirty tracking ----------
@@ -1016,8 +1118,8 @@ function parseBlResponse(line) {
   return { kw: tokens[0], toks: tokens.slice(1) };
 }
 
-async function blInfo() {
-  const line = await blExchange('BLINFO', 3000);
+async function blInfo(timeoutMs = 3000) {
+  const line = await blExchange('BLINFO', timeoutMs);
   const { kw, toks } = parseBlResponse(line);
   if (kw === 'BLNAK') throw new Error(`BLINFO rejected: ${toks.join(' ')}`);
   if (kw !== 'BLACK' || toks[0] !== 'BLINFO') {
@@ -1194,7 +1296,6 @@ async function runFirmwareUpdate(hexText) {
 }
 
 // ---- UI wiring ----
-const fwupdateBtn         = $('btn-fwupdate');
 const fwupdateModal       = $('fwupdate-modal');
 const fwupdateFile        = $('fwupdate-file');
 const fwupdateFileinfo    = $('fwupdate-fileinfo');
@@ -1228,21 +1329,6 @@ function resetFwModalState() {
   updateFwStatus('', 0);
   updateFwDetail('');
 }
-
-fwupdateBtn.addEventListener('click', () => {
-  if (!connected) {
-    updateStatus.textContent = 'Connect to the SPS-1 first.';
-    setTimeout(() => { updateStatus.textContent = ''; }, 3000);
-    return;
-  }
-  if (simulating) {
-    updateStatus.textContent = 'Firmware update is not available in Simulate mode.';
-    setTimeout(() => { updateStatus.textContent = ''; }, 3000);
-    return;
-  }
-  resetFwModalState();
-  fwupdateModal.removeAttribute('hidden');
-});
 
 fwupdateFile.addEventListener('change', async () => {
   const file = fwupdateFile.files[0];
