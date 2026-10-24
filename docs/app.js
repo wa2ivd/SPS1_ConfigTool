@@ -139,11 +139,6 @@ let appVisible = false;
 // Most recent live UPDATE values, kept so the test page can re-render from
 // the last poll when the view is switched without waiting for the next one.
 const liveState = { V: NaN, A: NaN, R: null, P: null, FS: '' };
-// Value the Power Request button will send on its next press. Alternates
-// 0/1 with each click, independent of the (combined) live request status —
-// the SPS-1 reports only the OR of local+DCN requests, so the button tracks
-// its own DCN request value.
-let pwrToggle = 0;
 
 // ---------- Logging ----------
 const setStatus = (text) => { statusEl.textContent = text; };
@@ -519,9 +514,6 @@ function handleSettings(f) {
   populateInputs(cfg);
   stAddrSw.textContent = cfg.addrSw ? cfg.addrSw.toUpperCase().padStart(2, '0') : '—';
   stSetSw.textContent  = cfg.setSw || '—';
-  // Reset the Power Request toggle on the first SETTINGS after a fresh
-  // connect (not on later config refreshes).
-  if (!appVisible) pwrToggle = 0;
   appVisible = true;
   applyView();
   // Limits (UV/OV/OC) just changed, so the gauge tick marks need refreshing.
@@ -746,12 +738,13 @@ function renderTestView() {
           R == null ? 'neutral' : (FS === '' ? 'good' : 'bad'));
 }
 
-// Power Request button: alternate the DCN request 0↔1 and send a PWR command.
-// Independent of the live (combined) status, which the pill above reflects.
+// Power Request button: always send the opposite of the current live power
+// request state, so it stays correct even if an external switch changed it.
+// When the live state is unknown, default to requesting ON.
 testPwrBtn.addEventListener('click', async () => {
   if (!connected) return;
-  pwrToggle = pwrToggle ? 0 : 1;
-  await send(`PWR,${pwrToggle}`);
+  const next = liveState.R === '1' ? 0 : 1;
+  await send(`PWR,${next}`);
 });
 
 // ---------- Dirty tracking ----------
