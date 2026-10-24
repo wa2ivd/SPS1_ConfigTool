@@ -18,6 +18,10 @@ const statusEl = $('status');
 const mainEl = $('main');
 const logEl = $('log');
 const toggleLogBtn = $('btn-toggle-log');
+// Second serial-trace view on the SPS-1 Test page. appendLog mirrors every
+// line into both so the trace is monitorable from whichever view is active.
+const logEl2 = $('log2');
+const toggleLogBtn2 = $('btn-toggle-log2');
 
 const welcomeModal = $('welcome-modal');
 const welcomeContinue = $('welcome-continue');
@@ -47,17 +51,20 @@ const updateStatus = $('update-status');
 const refreshLogsBtn = $('btn-refresh-logs');
 const resetLogsBtn = $('btn-reset-logs');
 
-// State display
-const stV = $('state-voltage');
-const stA = $('state-current');
-const stPwr = $('state-power');
-const stSwitch = $('state-switch');
-const stFault = $('state-fault');
-const stRetries = $('state-retries');
-const stWd = $('state-wd');
+// State display (power-up switch positions + firmware version)
 const stFwver = $('state-fwver');
 const stAddrSw = $('state-addrsw');
 const stSetSw = $('state-setsw');
+
+// SPS-1 Test page
+const viewToggle = $('view-toggle');
+const testEl = $('test-main');
+const testSwitch = $('test-switch');
+const testFault = $('test-fault');
+const testPower = $('test-power');
+const testPwrBtn = $('test-pwr-btn');
+const gaugeVoltageEl = $('gauge-voltage');
+const gaugeCurrentEl = $('gauge-current');
 
 // Logs display
 const logOnTime = $('log-ontime');
@@ -123,21 +130,46 @@ let original = null;
 // physical DCN ADDR switch and the EEPROM-stored address.
 let connectedAddr = null;
 
+// ---------- View state ----------
+// Which main view is showing: 'config' or 'test'. `appVisible` is true once
+// the device is connected and a SETTINGS reply has arrived — only then is
+// either view (and the view-toggle button) usable.
+let activeView = 'config';
+let appVisible = false;
+// Most recent live UPDATE values, kept so the test page can re-render from
+// the last poll when the view is switched without waiting for the next one.
+const liveState = { V: NaN, A: NaN, R: null, P: null, FS: '' };
+// Value the Power Request button will send on its next press. Alternates
+// 0/1 with each click, independent of the (combined) live request status —
+// the SPS-1 reports only the OR of local+DCN requests, so the button tracks
+// its own DCN request value.
+let pwrToggle = 0;
+
 // ---------- Logging ----------
 const setStatus = (text) => { statusEl.textContent = text; };
+// Every serial-trace view that should receive log lines.
+const logEls = [logEl, logEl2].filter(Boolean);
 const appendLog = (line) => {
-  const div = document.createElement('div');
-  div.textContent = line;
-  logEl.appendChild(div);
-  logEl.scrollTop = logEl.scrollHeight;
-  while (logEl.childElementCount > 500) logEl.removeChild(logEl.firstChild);
+  for (const el of logEls) {
+    const div = document.createElement('div');
+    div.textContent = line;
+    el.appendChild(div);
+    el.scrollTop = el.scrollHeight;
+    while (el.childElementCount > 500) el.removeChild(el.firstChild);
+  }
 };
 
-toggleLogBtn.addEventListener('click', () => {
-  const hidden = logEl.hasAttribute('hidden');
-  if (hidden) { logEl.removeAttribute('hidden'); toggleLogBtn.textContent = 'hide'; }
-  else { logEl.setAttribute('hidden', ''); toggleLogBtn.textContent = 'show'; }
-});
+// Wire a show/hide toggle button to its serial-trace element. Each view's
+// toggle acts only on its own trace.
+function wireLogToggle(btn, el) {
+  if (!btn || !el) return;
+  btn.addEventListener('click', () => {
+    if (el.hasAttribute('hidden')) { el.removeAttribute('hidden'); btn.textContent = 'hide'; }
+    else { el.setAttribute('hidden', ''); btn.textContent = 'show'; }
+  });
+}
+wireLogToggle(toggleLogBtn, logEl);
+wireLogToggle(toggleLogBtn2, logEl2);
 
 // ---------- Welcome flow ----------
 welcomeContinue.addEventListener('click', () => {
@@ -145,6 +177,38 @@ welcomeContinue.addEventListener('click', () => {
   connectBtn.disabled = false;
   simulateBtn.disabled = false;
   setStatus('Ready — click Connect to choose serial port, or Simulate to try the UI without one.');
+});
+
+// ---------- View switching (Configuration ↔ SPS-1 Test) ----------
+// Show whichever view is active while the device is connected; hide both
+// (and disable the toggle) when it isn't. The toggle button's label always
+// names the OTHER view — the one clicking it switches to.
+function applyView() {
+  viewToggle.disabled = !appVisible;
+  if (!appVisible) {
+    mainEl.setAttribute('hidden', '');
+    testEl.setAttribute('hidden', '');
+    return;
+  }
+  if (activeView === 'test') {
+    mainEl.setAttribute('hidden', '');
+    testEl.removeAttribute('hidden');
+    viewToggle.textContent = 'Configuration';
+    // The "switch is ON" config-only warning must never cover the test page,
+    // which is exactly where the operator turns the switch on.
+    powerWarning.setAttribute('hidden', '');
+    renderTestView();
+  } else {
+    testEl.setAttribute('hidden', '');
+    mainEl.removeAttribute('hidden');
+    viewToggle.textContent = 'SPS-1 Test';
+  }
+}
+
+viewToggle.addEventListener('click', () => {
+  if (!appVisible) return;
+  activeView = activeView === 'config' ? 'test' : 'config';
+  applyView();
 });
 
 // ---------- Serial open / close ----------
@@ -267,7 +331,9 @@ async function closePort() {
     connectBtn.disabled = false;
     simulateBtn.disabled = false;
     disconnectBtn.disabled = true;
-    mainEl.setAttribute('hidden', '');
+    appVisible = false;
+    activeView = 'config';
+    applyView();
     powerWarning.setAttribute('hidden', '');
     return;
   }
@@ -285,7 +351,9 @@ async function closePort() {
   connectBtn.disabled = false;
   simulateBtn.disabled = false;
   disconnectBtn.disabled = true;
-  mainEl.setAttribute('hidden', '');
+  appVisible = false;
+  activeView = 'config';
+  applyView();
   powerWarning.setAttribute('hidden', '');
 }
 
@@ -333,7 +401,9 @@ async function readLoop() {
       port = null;
       reader = null;
       readableStreamClosed = null;
-      mainEl.setAttribute('hidden', '');
+      appVisible = false;
+      activeView = 'config';
+      applyView();
       powerWarning.setAttribute('hidden', '');
       connectBtn.disabled = false;
       simulateBtn.disabled = false;
@@ -405,29 +475,22 @@ function handleUpdate(f) {
   const R  = f[2];
   const P  = f[3];
   const FS = (f[4] || '').trim();
-  const r  = f[5];
   const V  = f[6];
   const A  = f[7];
-  const WD = f[8];
   const idle = R === '0';
 
-  stV.textContent = `${V} V`;
-  stA.textContent = `${A} A`;
-  stPwr.textContent = R === '1' ? 'ON' : 'OFF';
-  stPwr.className = `value ${R === '1' ? 'bad' : 'good'}`;
-  stSwitch.textContent = P === '1' ? 'ON' : 'OFF';
-  stSwitch.className = `value ${P === '1' ? 'bad' : 'good'}`;
-  stFault.textContent = FS === '' ? 'None' :
-                        FS === 'UV' ? 'Undervoltage' :
-                        FS === 'OV' ? 'Overvoltage' :
-                        FS === 'OC' ? 'Overcurrent' : FS;
-  stFault.className = `value ${FS === '' ? 'good' : 'bad'}`;
-  stRetries.textContent = r ?? '—';
-  stWd.textContent = WD === 'WD' ? 'WATCHDOG RESET' : 'OK';
-  stWd.className = `value ${WD === 'WD' ? 'bad' : 'good'}`;
+  // Keep the latest live values for the SPS-1 Test page gauges/indicators.
+  liveState.V = parseFloat(V);
+  liveState.A = parseFloat(A);
+  liveState.R = R;
+  liveState.P = P;
+  liveState.FS = FS;
+  renderTestView();
 
   pwPower.textContent = R === '1' ? 'ON' : 'OFF';
-  if (!idle) powerWarning.removeAttribute('hidden');
+  // The "switch is ON" warning only applies to the configuration page (where
+  // it blocks edits). Never show it over the test page.
+  if (!idle && activeView === 'config') powerWarning.removeAttribute('hidden');
   else powerWarning.setAttribute('hidden', '');
 }
 
@@ -456,7 +519,13 @@ function handleSettings(f) {
   populateInputs(cfg);
   stAddrSw.textContent = cfg.addrSw ? cfg.addrSw.toUpperCase().padStart(2, '0') : '—';
   stSetSw.textContent  = cfg.setSw || '—';
-  mainEl.removeAttribute('hidden');
+  // Reset the Power Request toggle on the first SETTINGS after a fresh
+  // connect (not on later config refreshes).
+  if (!appVisible) pwrToggle = 0;
+  appVisible = true;
+  applyView();
+  // Limits (UV/OV/OC) just changed, so the gauge tick marks need refreshing.
+  renderTestView();
   setStatus(`${simulating ? 'Simulating' : 'Connected'} — DCN address ${connectedAddr || cfg.addr}`);
   refreshDirty();
 }
@@ -549,6 +618,141 @@ function updateMobileGraph() {
   mvbarOff.style.left = `${pctOf(off)}%`;
   mvbarOn.style.left  = `${pctOf(on)}%`;
 }
+
+// ---------- SPS-1 Test page: radial gauges ----------
+// A 180° (semicircular) gauge drawn as SVG. value min maps to the left end
+// (angle 180°) and max to the right end (angle 0°); the needle sweeps the
+// top arc. Limit ticks (UV/OV/OC) are positioned by their fraction of the
+// scale and the whole thing re-renders cheaply on each STATE poll.
+const GA = { w: 240, h: 172, cx: 120, cy: 128, r: 92, band: 14, needleR: 72, hubR: 7 };
+
+// Point on the gauge at scale fraction `frac` (0–1, clamped) and `radius`.
+function gaugePt(frac, radius) {
+  const f = Math.max(0, Math.min(1, frac));
+  const ang = (180 - f * 180) * Math.PI / 180;
+  return { x: GA.cx + radius * Math.cos(ang), y: GA.cy - radius * Math.sin(ang) };
+}
+
+// SVG arc path along `radius` from fraction a to fraction b (a < b). The top
+// arc is the clockwise (sweep-flag 1) direction in SVG's y-down space.
+function gaugeArc(a, b, radius) {
+  const p0 = gaugePt(a, radius);
+  const p1 = gaugePt(b, radius);
+  // Every gauge span is at most a half-circle (180°), so always take the
+  // minor arc (large-arc-flag 0). sweep-flag 1 keeps it on the top.
+  return `M ${p0.x.toFixed(2)} ${p0.y.toFixed(2)} ` +
+         `A ${radius} ${radius} 0 0 1 ${p1.x.toFixed(2)} ${p1.y.toFixed(2)}`;
+}
+
+function renderGauge(el, opts) {
+  if (!el) return;
+  const { value, min, max, unit, decimals, ticks, scaleEvery, scaleLabels } = opts;
+  const hasVal = Number.isFinite(value);
+  const span = max - min;
+  const frac = hasVal ? (value - min) / span : 0;
+  const cfrac = Math.max(0, Math.min(1, frac));
+  const needle = gaugePt(cfrac, GA.needleR);
+
+  // Short radial line between two radii at scale fraction f.
+  const radial = (f, r1, r2, cls, w) => {
+    const a = gaugePt(f, r1), b = gaugePt(f, r2);
+    return `<line class="${cls}" x1="${a.x.toFixed(2)}" y1="${a.y.toFixed(2)}" ` +
+           `x2="${b.x.toFixed(2)}" y2="${b.y.toFixed(2)}" stroke-width="${w}" />`;
+  };
+
+  // Fixed scale: minor hash marks just outside the band, every `scaleEvery`.
+  let scaleSVG = '';
+  if (Number.isFinite(scaleEvery) && scaleEvery > 0) {
+    for (let v = min; v <= max + 1e-9; v += scaleEvery) {
+      scaleSVG += radial((v - min) / span, GA.r + GA.band / 2, GA.r + GA.band / 2 + 5,
+                         'gauge-scaletick', 1.5);
+    }
+  }
+  // Numeric legends sit outside the hash marks.
+  let scaleLabelSVG = '';
+  for (const v of (scaleLabels || [])) {
+    const p = gaugePt((v - min) / span, GA.r + GA.band / 2 + 15);
+    scaleLabelSVG +=
+      `<text class="gauge-ticklabel" x="${p.x.toFixed(2)}" y="${(p.y + 4).toFixed(2)}" ` +
+      `text-anchor="middle" font-size="11">${v}</text>`;
+  }
+
+  // Limit markers (UV/OV/OC): red line crossing the band, label on the inside
+  // so it never collides with the fixed scale numbers on the outside.
+  let tickSVG = '';
+  for (const t of (ticks || [])) {
+    if (!Number.isFinite(t.frac) || t.frac < 0 || t.frac > 1) continue;
+    tickSVG += radial(t.frac, GA.r - GA.band / 2 - 2, GA.r + GA.band / 2 + 2,
+                      'gauge-tick-limit', 2.5);
+    const lbl = gaugePt(t.frac, GA.r - GA.band / 2 - 12);
+    tickSVG +=
+      `<text class="gauge-limitlabel" x="${lbl.x.toFixed(2)}" y="${(lbl.y + 4).toFixed(2)}" ` +
+      `text-anchor="middle" font-size="11">${t.label}</text>`;
+  }
+
+  const valText = hasVal ? `${value.toFixed(decimals)} ${unit}` : `— ${unit}`;
+
+  el.innerHTML =
+    `<svg viewBox="0 0 ${GA.w} ${GA.h}" role="img">` +
+    `<path class="gauge-track" d="${gaugeArc(0, 1, GA.r)}" fill="none" ` +
+    `stroke-width="${GA.band}" stroke-linecap="round" />` +
+    (hasVal
+      ? `<path class="gauge-fill" d="${gaugeArc(0, Math.max(0.0001, cfrac), GA.r)}" fill="none" ` +
+        `stroke-width="${GA.band}" stroke-linecap="round" />`
+      : '') +
+    scaleSVG + scaleLabelSVG + tickSVG +
+    `<line class="gauge-needle" x1="${GA.cx}" y1="${GA.cy}" ` +
+    `x2="${needle.x.toFixed(2)}" y2="${needle.y.toFixed(2)}" stroke-width="3" stroke-linecap="round" />` +
+    `<circle class="gauge-hub" cx="${GA.cx}" cy="${GA.cy}" r="${GA.hubR}" />` +
+    `<text class="gauge-value" x="${GA.cx}" y="162" text-anchor="middle" font-size="22">${valText}</text>` +
+    `</svg>`;
+}
+
+function setPill(el, text, cls) {
+  if (!el) return;
+  el.textContent = text;
+  el.className = `pill ${cls}`;
+}
+
+// Re-render the whole test page from the latest config limits + live state.
+// Safe to call whether or not the test view is showing.
+function renderTestView() {
+  const uv = original ? original.uvset_mv / 1000 : NaN;
+  const ov = original ? original.ovset_mv / 1000 : NaN;
+  const oc = original ? original.ocset_ma / 1000 : NaN;
+
+  renderGauge(gaugeVoltageEl, {
+    value: liveState.V, min: 0, max: 20, unit: 'V', decimals: 1,
+    scaleEvery: 2, scaleLabels: [0, 10, 20],
+    ticks: [
+      { frac: uv / 20, label: 'UV' },
+      { frac: ov / 20, label: 'OV' },
+    ],
+  });
+  renderGauge(gaugeCurrentEl, {
+    value: liveState.A, min: 0, max: 40, unit: 'A', decimals: 1,
+    scaleEvery: 5, scaleLabels: [0, 10, 20, 30, 40],
+    ticks: [{ frac: oc / 40, label: 'OC' }],
+  });
+
+  const { P, R, FS } = liveState;
+  // On the test page, ON is the desired/active state → green; OFF is neutral.
+  setPill(testSwitch, P === '1' ? 'ON' : (P === '0' ? 'OFF' : '—'),
+          P === '1' ? 'good' : (P === '0' ? 'neutral' : 'neutral'));
+  setPill(testPower, R === '1' ? 'ON' : (R === '0' ? 'OFF' : '—'),
+          R === '1' ? 'good' : (R === '0' ? 'neutral' : 'neutral'));
+  // FS arrives trimmed: '' = none, else 'UV' / 'OV' / 'OC'.
+  setPill(testFault, R == null ? '—' : (FS === '' ? 'None' : FS),
+          R == null ? 'neutral' : (FS === '' ? 'good' : 'bad'));
+}
+
+// Power Request button: alternate the DCN request 0↔1 and send a PWR command.
+// Independent of the live (combined) status, which the pill above reflects.
+testPwrBtn.addEventListener('click', async () => {
+  if (!connected) return;
+  pwrToggle = pwrToggle ? 0 : 1;
+  await send(`PWR,${pwrToggle}`);
+});
 
 // ---------- Dirty tracking ----------
 const dirtyMap = () => {
@@ -944,8 +1148,9 @@ function simulateSend(cmd) {
       );
       return;
     case 'STATE':
-      // Tiny jitter on voltage so the display looks live.
+      // Tiny jitter on voltage/current so the display looks live.
       simState.V = (13.20 + (Math.random() - 0.5) * 0.04).toFixed(3);
+      if (simState.R === '1') simState.A = (8.0 + (Math.random() - 0.5) * 0.3).toFixed(3);
       simRespond(
         `UPDATE,SPS1,${simState.R},${simState.P},${simState.FS},${simState.r},` +
         `${simState.V},${simState.A},${simState.WD}`
@@ -994,6 +1199,13 @@ function simulateSend(cmd) {
       simState.histUv = '0';
       simState.histOv = '0';
       simState.histOc = '0';
+      return;
+    case 'PWR':
+      // Emulate the DCN power request. With no simulated fault the output
+      // switch follows the request, and current flows while on.
+      simState.R = parts[1] === '1' ? '1' : '0';
+      simState.P = simState.R;
+      simState.A = simState.R === '1' ? '8.000' : '0.000';
       return;
   }
 }
