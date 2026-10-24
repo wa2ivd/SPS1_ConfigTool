@@ -157,28 +157,28 @@
             </label>
           </div>
         </section>
-      </div>
 
-      <section class="card calset-card">
-        <h2>Calibration (CALSET)</h2>
-        <p class="warning-banner">
-          ⚠ <strong>CALSET parameters should match the factory-provided values</strong> and only be changed if the
-          original values were corrupted. These values directly affect the overcurrent trip point. Setting them
-          incorrectly may allow damage to connected equipment.
-        </p>
-        <div class="field-grid">
-          <label>
-            <span>Scale Factor</span>
-            <input id="cfg-cal" type="number" step="0.001" min="0" />
-            <small>Always positive</small>
-          </label>
-          <label>
-            <span>Offset (mA)</span>
-            <input id="cfg-ofst" type="number" step="1" />
-            <small>May be positive or negative</small>
-          </label>
-        </div>
-      </section>
+        <section class="card calset-card">
+          <h2>Calibration (CALSET)</h2>
+          <p class="warning-banner">
+            ⚠ <strong>CALSET parameters should match the factory-provided values</strong> and only be changed if the
+            original values were corrupted. These values directly affect the overcurrent trip point. Setting them
+            incorrectly may allow damage to connected equipment.
+          </p>
+          <div class="field-grid">
+            <label>
+              <span>Scale Factor</span>
+              <input id="cfg-cal" type="number" step="0.001" min="0" />
+              <small>Always positive</small>
+            </label>
+            <label>
+              <span>Offset (mA)</span>
+              <input id="cfg-ofst" type="number" step="1" />
+              <small>May be positive or negative</small>
+            </label>
+          </div>
+        </section>
+      </div>
 
       <section class="action-bar">
         <button id="btn-update" class="primary">UPDATE DEVICE</button>
