@@ -448,6 +448,17 @@ button.link {
   margin-top: 1rem;
 }
 
+/* Welcome / intro modal */
+.welcome-card {
+  max-width: 48rem;
+  border-top: 4px solid var(--accent);
+}
+.welcome-card h3 {
+  margin: 1.1rem 0 0.35rem;
+  font-size: 1.05rem;
+}
+.welcome-card p { margin: 0.4rem 0; }
+
 /* Firmware update modal */
 .fwupdate-card {
   max-width: 40rem;

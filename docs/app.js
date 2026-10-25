@@ -1709,10 +1709,11 @@ fwupdateStart.addEventListener('click', async () => {
       `Verify CRC <code>0x${hex4(result.expectedCrc)}</code>. ` +
       `Bootloader v${(result.info.blVersion >> 8)}.${(result.info.blVersion & 0xFF).toString().padStart(2, '0')} ` +
       `committed the trailer and reset the device.<br><br>` +
-      `<em>Return the BCD ADDR switch to its normal operating position.</em> ` +
-      `The device should resume responding to live state polls within a few ` +
-      `seconds. If it does not, power-cycle once more with the switch in the ` +
-      `correct position.`;
+      `<strong>To finish:</strong><br>` +
+      `&nbsp;&nbsp;1. Remove power from the SPS-1.<br>` +
+      `&nbsp;&nbsp;2. Set the ADDR switch back to your desired DCN address.<br>` +
+      `&nbsp;&nbsp;3. Reconnect to the configuration tool to confirm that the ` +
+      `application firmware is operating correctly.`;
   } catch (err) {
     fwupdateResult.innerHTML =
       `<strong style="color:var(--danger)">Update failed.</strong><br><br>` +

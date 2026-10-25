@@ -255,17 +255,33 @@
 
     <!-- Startup welcome modal -->
     <div id="welcome-modal" class="modal">
-      <div class="modal-card" id="welcome-card">
-        <h2>Connect SPS-1</h2>
-        <p>Before continuing, please:</p>
-        <ul>
-          <li>Connect a single SPS-1 to the serial port.</li>
-          <li>Ensure input power is connected to the SPS-1.</li>
-          <li><strong>Only one SPS-1 may be connected</strong> — this tool uses broadcast messages
-            and will misbehave if multiple devices respond.</li>
-        </ul>
+      <div class="modal-card welcome-card" id="welcome-card">
+        <h2>SPS-1 Configuration Tool</h2>
+        <p>This tool allows you to update configuration settings and test remote operation
+          of your SPS-1 Smart Power Switch.</p>
+
+        <h3>Connecting your SPS-1</h3>
+        <p>You can connect your SPS-1 using either the USB-C port or the DCN port.</p>
+        <p>When connected through the <strong>USB-C port</strong>, the SPS-1 controller is
+          powered by the USB connection for updating the configuration, so a 12&nbsp;volt
+          power supply is not required.</p>
+        <p class="muted">If your computer does not have a USB-C port, a USB-A to USB-C cable
+          works fine.</p>
+        <p>To connect through the <strong>DCN port</strong>, you will need a USB-to-RS-485
+          serial adapter and an appropriate cable to reach the SPS-1 RJ45 connector. You will
+          also need a 12&nbsp;volt power supply connected to the SPS-1 Input connector.</p>
+
+        <h3>Updating firmware</h3>
+        <p>This tool can also update the firmware in your SPS-1. It will automatically detect
+          when an SPS-1 is connected in Bootloader Mode and prompt you to select the firmware
+          version you want to load. The firmware update process is automatic.</p>
+
+        <p class="section-note"><strong>Important:</strong> connect only one SPS-1 at a time.
+          This tool uses broadcast messages and will misbehave if multiple devices respond.</p>
         <p class="muted">When you click Connect, your browser will show a list of available
-          serial ports. Pick the one the SPS-1 is attached to.</p>
+          serial ports. Pick the one the SPS-1 is attached to. If using the USB port, the
+          SPS-1 will show up as an <strong>MCP2221 USB device</strong>. If using the DCN port,
+          device identification will depend on which USB-to-RS-485 adapter is being used.</p>
         <div class="modal-actions">
           <button id="welcome-continue" class="primary">Continue</button>
         </div>
