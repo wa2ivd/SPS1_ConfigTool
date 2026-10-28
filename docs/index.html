@@ -304,6 +304,24 @@
       </div>
     </div>
 
+    <!-- Mode selection (shown once a live SPS-1 is confirmed) -->
+    <div id="mode-select-modal" class="modal" hidden>
+      <div class="modal-card">
+        <h2>SPS-1 Connected</h2>
+        <p>A live SPS-1 was found on this port. What would you like to do?</p>
+        <ul>
+          <li><strong>Configure</strong> — review and change the stored settings.
+            The power switch must be OFF (idle) to edit configuration.</li>
+          <li><strong>Test</strong> — view live meters and exercise remote power
+            operation. The switch may be left powered ON.</li>
+        </ul>
+        <div class="modal-actions">
+          <button id="mode-test">Test Mode</button>
+          <button id="mode-configure" class="primary">Configure</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Power-on warning modal -->
     <div id="power-warning" class="modal" hidden>
       <div class="modal-card warning">

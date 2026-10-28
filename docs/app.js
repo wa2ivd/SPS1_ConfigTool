@@ -32,6 +32,10 @@ const blDetectedContinue = $('bl-detected-continue');
 const nodeviceModal = $('nodevice-modal');
 const nodeviceDisconnect = $('nodevice-disconnect');
 
+const modeSelectModal = $('mode-select-modal');
+const modeTestBtn = $('mode-test');
+const modeConfigureBtn = $('mode-configure');
+
 const powerWarning = $('power-warning');
 const pwPower = $('pw-power');
 
@@ -136,6 +140,10 @@ let connectedAddr = null;
 // either view (and the view-toggle button) usable.
 let activeView = 'config';
 let appVisible = false;
+// True from the moment a live SPS-1 is confirmed until the user picks Test or
+// Configure in the mode-select modal. While set, the config-only "switch is
+// ON" warning is suppressed so it can't pop up behind the choice.
+let awaitingModeChoice = false;
 // Most recent live UPDATE values, kept so the test page can re-render from
 // the last poll when the view is switched without waiting for the next one.
 const liveState = { V: NaN, A: NaN, R: null, P: null, FS: '' };
@@ -206,6 +214,33 @@ viewToggle.addEventListener('click', () => {
   applyView();
 });
 
+// ---------- Mode selection (Test vs Configure) ----------
+// Shown once a live SPS-1 is confirmed, before either view is used. Configure
+// goes to the configuration page (where the power-off requirement applies);
+// Test goes straight to the live test page regardless of power state.
+function promptModeSelection() {
+  awaitingModeChoice = true;
+  powerWarning.setAttribute('hidden', '');
+  modeSelectModal.removeAttribute('hidden');
+}
+
+modeConfigureBtn.addEventListener('click', () => {
+  modeSelectModal.setAttribute('hidden', '');
+  awaitingModeChoice = false;
+  activeView = 'config';
+  applyView();
+  // Now that we're in Configure mode, re-check the live power state and show
+  // the must-power-off warning if the switch isn't idle.
+  if (liveState.R != null && liveState.R !== '0') powerWarning.removeAttribute('hidden');
+});
+
+modeTestBtn.addEventListener('click', () => {
+  modeSelectModal.setAttribute('hidden', '');
+  awaitingModeChoice = false;
+  activeView = 'test';
+  applyView();
+});
+
 // ---------- Serial open / close ----------
 async function openPort() {
   setStatus('Selecting port…');
@@ -226,8 +261,13 @@ async function openPort() {
   const kind = await detectDevice();
   if (kind === 'app') {
     setStatus('SPS-1 found — reading configuration…');
+    // Suppress the config-only power warning from the moment the device is
+    // confirmed — the mode choice comes first, even if a STATE poll lands
+    // during the initial queries.
+    awaitingModeChoice = true;
     await initialQueries();
     startPolling();
+    promptModeSelection();
   } else if (kind === 'bootloader') {
     onBootloaderDetected();
   } else {
@@ -316,6 +356,8 @@ async function closePort() {
   blDetectedModal.setAttribute('hidden', '');
   nodeviceModal.setAttribute('hidden', '');
   fwupdateModal.setAttribute('hidden', '');
+  modeSelectModal.setAttribute('hidden', '');
+  awaitingModeChoice = false;
   if (simulating) {
     simulating = false;
     connected = false;
@@ -400,6 +442,8 @@ async function readLoop() {
       activeView = 'config';
       applyView();
       powerWarning.setAttribute('hidden', '');
+      modeSelectModal.setAttribute('hidden', '');
+      awaitingModeChoice = false;
       connectBtn.disabled = false;
       simulateBtn.disabled = false;
       disconnectBtn.disabled = true;
@@ -484,8 +528,9 @@ function handleUpdate(f) {
 
   pwPower.textContent = R === '1' ? 'ON' : 'OFF';
   // The "switch is ON" warning only applies to the configuration page (where
-  // it blocks edits). Never show it over the test page.
-  if (!idle && activeView === 'config') powerWarning.removeAttribute('hidden');
+  // it blocks edits). Never show it over the test page, and never while the
+  // user is still choosing Test vs Configure mode.
+  if (!idle && activeView === 'config' && !awaitingModeChoice) powerWarning.removeAttribute('hidden');
   else powerWarning.setAttribute('hidden', '');
 }
 
@@ -1214,8 +1259,10 @@ simulateBtn.addEventListener('click', async () => {
   disconnectBtn.disabled = false;
   setStatus('Simulating SPS-1 — no device connected');
   appendLog('! simulate mode started');
+  awaitingModeChoice = true;
   await initialQueries();
   startPolling();
+  promptModeSelection();
 });
 
 // ============================================================
