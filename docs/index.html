@@ -231,12 +231,22 @@
             <span id="test-switch" class="pill">—</span>
           </div>
           <div class="indicator">
-            <span class="label">Fault</span>
-            <span id="test-fault" class="pill">—</span>
-          </div>
-          <div class="indicator">
             <span class="label">Power Request (live)</span>
             <span id="test-power" class="pill">—</span>
+          </div>
+        </div>
+        <div class="indicator-row">
+          <div class="indicator">
+            <span class="label">Undervoltage</span>
+            <span id="test-fault-uv" class="pill">—</span>
+          </div>
+          <div class="indicator">
+            <span class="label">Overvoltage</span>
+            <span id="test-fault-ov" class="pill">—</span>
+          </div>
+          <div class="indicator">
+            <span class="label">Overcurrent</span>
+            <span id="test-fault-oc" class="pill">—</span>
           </div>
         </div>
         <div class="pwr-request">
@@ -244,6 +254,7 @@
           <span class="muted">Sends a DCN <code>PWR</code> command, alternating between 0 and 1
             with each press. The live status above reflects the unit's actual power request,
             which may also change from an external switch.</span>
+          <p><strong>NOTE: Toggle Power Request will have no effect if Switch Mode is set to Toggle</strong></p>
         </div>
       </section>
 

@@ -64,7 +64,9 @@ const stSetSw = $('state-setsw');
 const viewToggle = $('view-toggle');
 const testEl = $('test-main');
 const testSwitch = $('test-switch');
-const testFault = $('test-fault');
+const testFaultUv = $('test-fault-uv');
+const testFaultOv = $('test-fault-ov');
+const testFaultOc = $('test-fault-oc');
 const testPower = $('test-power');
 const testPwrBtn = $('test-pwr-btn');
 const gaugeVoltageEl = $('gauge-voltage');
@@ -778,9 +780,18 @@ function renderTestView() {
           P === '1' ? 'good' : (P === '0' ? 'neutral' : 'neutral'));
   setPill(testPower, R === '1' ? 'ON' : (R === '0' ? 'OFF' : '—'),
           R === '1' ? 'good' : (R === '0' ? 'neutral' : 'neutral'));
-  // FS arrives trimmed: '' = none, else 'UV' / 'OV' / 'OC'.
-  setPill(testFault, R == null ? '—' : (FS === '' ? 'None' : FS),
-          R == null ? 'neutral' : (FS === '' ? 'good' : 'bad'));
+  // FS arrives trimmed: '' = none, else exactly one of 'UV' / 'OV' / 'OC'
+  // (the firmware reports a single active fault at a time). Each indicator
+  // shows FAULT in red when its code is active, OK otherwise, or '—' before
+  // any live data has arrived.
+  const faultPill = (el, code) => {
+    if (R == null) { setPill(el, '—', 'neutral'); return; }
+    const active = FS === code;
+    setPill(el, active ? 'FAULT' : 'OK', active ? 'bad' : 'good');
+  };
+  faultPill(testFaultUv, 'UV');
+  faultPill(testFaultOv, 'OV');
+  faultPill(testFaultOc, 'OC');
 }
 
 // Power Request button: always send the opposite of the current live power
