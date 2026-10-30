@@ -4,7 +4,7 @@
   "description": "Configuration tool for the SPS-1 Smart Power Switch. Runs in any Chromium-based browser via the Web Serial API.",
   "private": true,
   "scripts": {
-    "serve": "npx --yes serve docs"
+    "serve": "npx --yes serve ."
   },
   "author": {
     "name": "Tom Apalenek",

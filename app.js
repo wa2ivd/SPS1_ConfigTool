@@ -5,8 +5,11 @@
 // confirm by re-querying CONFIG / STATE / LOGS.
 //
 // Requires a Chromium-based browser (Chrome / Edge / Brave / Opera) for the
-// Web Serial API. Must be served over HTTPS or localhost — file:// URLs
-// don't expose navigator.serial.
+// Web Serial API. Works from HTTPS, localhost, or a local file:// path —
+// Chromium treats file:// as a secure context, so navigator.serial is
+// available either way. (The bundled-firmware list is loaded with fetch(),
+// which the browser blocks over file://; it falls back to the custom-file
+// picker — see populateFwSelect.)
 
 // ---------- DOM refs ----------
 const $ = (id) => document.getElementById(id);
